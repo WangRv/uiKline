@@ -121,6 +121,9 @@ class Exchange(Enum):
 
     # Special Function
     LOCAL = "LOCAL"         # For local generated data
+    # add new exchange of  china stocks
+    SH: str = "上海证券交易所"
+    SZ: str = "深圳证券交易所"
 
 
 class Currency(Enum):
