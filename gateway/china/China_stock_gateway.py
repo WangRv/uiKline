@@ -8,6 +8,7 @@ from queue import Queue, Empty
 from threading import Thread
 from multiprocessing.dummy import Pool
 from ...trader.gateway import BaseGateway
+from ...trader.constant import Direction
 from ...trader.object import \
     (TickData, SubscribeRequest, OrderRequest, CancelRequest,
      LogData, Exchange, Product, ContractData)
@@ -26,7 +27,7 @@ class ChinaStocksGateway(BaseGateway):
         super(ChinaStocksGateway, self).__init__(event_engine, "ChinaStock")
         self.subscribe_stocks: list[str] = list()
         self.all_stock_data: DataFrame = DataFrame()
-        self.bar_min: int = 0.5
+        self.bar_min: int = 1
         # related contract data
         self.query_contract: bool = False
         self.code_to_contract_dict: Dict = {}
@@ -99,7 +100,7 @@ class ChinaStocksGateway(BaseGateway):
         """multi threading request already subscribe stock tick data"""
         for code in self.subscribe_stocks:
             task_request = self._request_task_dict.get(code)
-            if  not task_request or  task_request.successful():
+            if not task_request or task_request.successful():
                 request_task = self._tasks_tick_request_pool.apply_async(
                     self.request_code_tick_data, args=(code,),
                     callback=self.call_back_request_tick_data)
@@ -135,25 +136,62 @@ class ChinaStocksGateway(BaseGateway):
         open_price = contract.open.values[0]
         high_price = contract.high.values[0]
         low_price = contract.low.values[0]
-        volume = contract.volume.values[0]
-        limit_up: float = contract.preprice .values[0]* 1.1
-        limit_down: float = contract.preprice .values[0] * 0.9
+        volume = ticks_data.volume.sum()
+        limit_up: float = contract.preprice.values[0] * 1.1
+        limit_down: float = contract.preprice.values[0] * 0.9
         # new second of time trade data
         last_price = ticks_data.price[0]
         last_volume = ticks_data.volume[0]
+        # judge order direction
+        direction_type: str = ticks_data.type[0]
+        if direction_type == "买盘":
+            bid_price_1: float = last_price
+            bid_volume_1: float = last_volume
+            tick = TickData(symbol=symbol,
+                            exchange=exchange,
+                            datetime=date_time,
+                            name=name,
+                            volume=volume,
+                            open_price=open_price,
+                            high_price=high_price,
+                            low_price=low_price,
+                            limit_up=limit_up,
+                            limit_down=limit_down, last_price=last_price,
+                            last_volume=last_volume,
+                            ask_price_1=bid_price_1,
+                            ask_volume_1=bid_volume_1,
+                            gateway_name=self.gateway_name)
+        elif direction_type == "卖盘":
+            ask_price_1: float = last_price
+            ask_volume_1: float = last_volume
+            tick = TickData(symbol=symbol,
+                            exchange=exchange,
+                            datetime=date_time,
+                            name=name,
+                            volume=volume,
+                            open_price=open_price,
+                            high_price=high_price,
+                            low_price=low_price,
+                            limit_up=limit_up,
+                            limit_down=limit_down, last_price=last_price,
+                            last_volume=last_volume,
+                            ask_price_1=ask_price_1,
+                            ask_volume_1=ask_volume_1,
+                            gateway_name=self.gateway_name)
         # instance tick object
-        tick = TickData(symbol=symbol,
-                        exchange=exchange,
-                        datetime=date_time,
-                        name=name,
-                        volume=volume,
-                        open_price=open_price,
-                        high_price=high_price,
-                        low_price=low_price,
-                        limit_up=limit_up,
-                        limit_down=limit_down, last_price=last_price,
-                        last_volume=last_volume,
-                        gateway_name=self.gateway_name)
+        else:
+            tick = TickData(symbol=symbol,
+                            exchange=exchange,
+                            datetime=date_time,
+                            name=name,
+                            volume=volume,
+                            open_price=open_price,
+                            high_price=high_price,
+                            low_price=low_price,
+                            limit_up=limit_up,
+                            limit_down=limit_down, last_price=last_price,
+                            last_volume=last_volume,
+                            gateway_name=self.gateway_name)
         # put tick to GUI event
         self.tick_queue.put(tick)
 

@@ -76,6 +76,48 @@ class TickData(BaseData):
         self.vt_symbol = f"{self.symbol}.{self.exchange.value}"
 
 
+# It is supporting for the python2 version
+@dataclass
+class VtTickData(TickData):
+    def __post_init__(self):
+        super(VtTickData, self).__post_init__()
+        self.vtSymbol = self.vt_symbol
+        self.lastPrice = self.last_price
+        self.lastVolume = self.last_volume
+        self.openInterest = self.open_interest
+        # convention trade data
+        self.openPrice = self.open_price
+        self.highPrice = self.high_price
+        self.lowPrice = self.low_price
+        self.preClosePrice = self.pre_close
+        self.upperLimit = self.limit_up
+        self.lowerLimit = self.limit_down
+        # five  quotation price
+        self.bidPrice1 = self.bid_price_1
+        self.bidPrice2 = self.bid_price_2
+        self.bidPrice3 = self.bid_price_3
+        self.bidPrice4 = self.bid_price_4
+        self.bidPrice5 = self.bid_price_5
+
+        self.askPrice1 = self.ask_price_1
+        self.askPrice2 = self.ask_price_2
+        self.askPrice3 = self.ask_price_3
+        self.askPrice4 = self.ask_price_4
+        self.askPrice5 = self.ask_price_5
+
+        self.bidVolume1 = self.bid_volume_1
+        self.bidVolume2 = self.bid_volume_2
+        self.bidVolume3 = self.bid_volume_3
+        self.bidVolume4 = self.bid_volume_4
+        self.bidVolume5 = self.bid_volume_5
+
+        self.askVolume1 = self.ask_volume_1
+        self.askVolume2 = self.ask_volume_2
+        self.askVolume3 = self.ask_volume_3
+        self.askVolume4 = self.ask_volume_4
+        self.askVolume5 = self.ask_volume_5
+
+
 @dataclass
 class BarData(BaseData):
     """
@@ -98,6 +140,18 @@ class BarData(BaseData):
         """"""
         self.vt_symbol = f"{self.symbol}.{self.exchange.value}"
 
+# Now It is barData which supporting for the python2 version
+@dataclass
+class VtBarData(BarData):
+    def __post_init__(self):
+        super(VtBarData, self).__post_init__() # execute old method
+        self.vtSymbol = self.vt_symbol
+        self.open  = self.open_price
+        self.high = self.high_price
+        self.low = self.low_price
+        self.close = self.close_price
+
+        self.openInterest = self.open_interest
 
 @dataclass
 class OrderData(BaseData):
@@ -235,13 +289,13 @@ class ContractData(BaseData):
     size: int
     pricetick: float
 
-    min_volume: float = 1           # minimum trading volume of the contract
-    stop_supported: bool = False    # whether server supports stop order
-    net_position: bool = False      # whether gateway uses net position volume
-    history_data: bool = False      # whether gateway provides bar history data
+    min_volume: float = 1  # minimum trading volume of the contract
+    stop_supported: bool = False  # whether server supports stop order
+    net_position: bool = False  # whether gateway uses net position volume
+    history_data: bool = False  # whether gateway provides bar history data
 
     option_strike: float = 0
-    option_underlying: str = ""     # vt_symbol of underlying contract
+    option_underlying: str = ""  # vt_symbol of underlying contract
     option_type: OptionType = None
     option_expiry: datetime = None
 

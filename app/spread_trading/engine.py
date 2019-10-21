@@ -29,7 +29,6 @@ from .base import (
 from .template import SpreadAlgoTemplate, SpreadStrategyTemplate
 from .algo import SpreadTakerAlgo
 
-
 APP_NAME = "SpreadTrading"
 
 
@@ -92,8 +91,8 @@ class SpreadDataEngine:
 
         self.write_log = spread_engine.write_log
 
-        self.legs: Dict[str, LegData] = {}          # vt_symbol: leg
-        self.spreads: Dict[str, SpreadData] = {}    # name: spread
+        self.legs: Dict[str, LegData] = {}  # vt_symbol: leg
+        self.spreads: Dict[str, SpreadData] = {}  # name: spread
         self.symbol_spread_map: Dict[str, List[SpreadData]] = defaultdict(list)
 
     def start(self):
@@ -231,11 +230,11 @@ class SpreadDataEngine:
         return leg
 
     def add_spread(
-        self,
-        name: str,
-        leg_settings: List[Dict],
-        active_symbol: str,
-        save: bool = True
+            self,
+            name: str,
+            leg_settings: List[Dict],
+            active_symbol: str,
+            save: bool = True
     ) -> None:
         """"""
         if name in self.spreads:
@@ -403,14 +402,14 @@ class SpreadAlgoEngine:
                 algo.update_timer()
 
     def start_algo(
-        self,
-        spread_name: str,
-        direction: Direction,
-        price: float,
-        volume: float,
-        payup: int,
-        interval: int,
-        lock: bool
+            self,
+            spread_name: str,
+            direction: Direction,
+            price: float,
+            volume: float,
+            payup: int,
+            interval: int,
+            lock: bool
     ) -> str:
         # Find spread object
         spread = self.spreads.get(spread_name, None)
@@ -447,8 +446,8 @@ class SpreadAlgoEngine:
         return algoid
 
     def stop_algo(
-        self,
-        algoid: str
+            self,
+            algoid: str
     ):
         """"""
         algo = self.algos.get(algoid, None)
@@ -469,13 +468,13 @@ class SpreadAlgoEngine:
         self.write_log(msg)
 
     def send_order(
-        self,
-        algo: SpreadAlgoTemplate,
-        vt_symbol: str,
-        price: float,
-        volume: float,
-        direction: Direction,
-        lock: bool
+            self,
+            algo: SpreadAlgoTemplate,
+            vt_symbol: str,
+            price: float,
+            volume: float,
+            direction: Direction,
+            lock: bool
     ) -> List[str]:
         """"""
         holding = self.offset_converter.get_position_holding(vt_symbol)
@@ -623,7 +622,8 @@ class SpreadStrategyEngine:
 
             for name in dir(module):
                 value = getattr(module, name)
-                if (isinstance(value, type) and issubclass(value, SpreadStrategyTemplate) and value is not SpreadStrategyTemplate):
+                if (isinstance(value, type) and issubclass(value,
+                                                           SpreadStrategyTemplate) and value is not SpreadStrategyTemplate):
                     self.classes[value.__name__] = value
         except:  # noqa
             msg = f"策略文件{module_name}加载失败，触发异常：\n{traceback.format_exc()}"
@@ -722,7 +722,7 @@ class SpreadStrategyEngine:
             self.call_strategy_func(strategy, strategy.on_trade, trade)
 
     def call_strategy_func(
-        self, strategy: SpreadStrategyTemplate, func: Callable, params: Any = None
+            self, strategy: SpreadStrategyTemplate, func: Callable, params: Any = None
     ):
         """
         Call function of a strategy and catch any exception raised.
@@ -740,7 +740,7 @@ class SpreadStrategyEngine:
             self.write_strategy_log(strategy, msg)
 
     def add_strategy(
-        self, class_name: str, strategy_name: str, spread_name: str, setting: dict
+            self, class_name: str, strategy_name: str, spread_name: str, setting: dict
     ):
         """
         Add a new strategy.
@@ -882,15 +882,15 @@ class SpreadStrategyEngine:
         return strategy.get_parameters()
 
     def start_algo(
-        self,
-        strategy: SpreadStrategyTemplate,
-        spread_name: str,
-        direction: Direction,
-        price: float,
-        volume: float,
-        payup: int,
-        interval: int,
-        lock: bool
+            self,
+            strategy: SpreadStrategyTemplate,
+            spread_name: str,
+            direction: Direction,
+            price: float,
+            volume: float,
+            payup: int,
+            interval: int,
+            lock: bool
     ) -> str:
         """"""
         algoid = self.spread_engine.start_algo(
@@ -916,14 +916,14 @@ class SpreadStrategyEngine:
         pass
 
     def send_order(
-        self,
-        strategy: SpreadStrategyTemplate,
-        vt_symbol: str,
-        price: float,
-        volume: float,
-        direction: Direction,
-        offset: Offset,
-        lock: bool
+            self,
+            strategy: SpreadStrategyTemplate,
+            vt_symbol: str,
+            price: float,
+            volume: float,
+            direction: Direction,
+            offset: Offset,
+            lock: bool
     ) -> List[str]:
         contract = self.main_engine.get_contract(vt_symbol)
 
