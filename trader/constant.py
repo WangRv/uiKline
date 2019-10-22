@@ -124,8 +124,8 @@ class Exchange(Enum):
     # add new exchange of  china stocks
     SH: str = "上海证券交易所"
     SZ: str = "深圳证券交易所"
-
-
+    # There are fund symbol in here
+    JJ:str = "基金"
 class Currency(Enum):
     """
     Currency.
