@@ -52,7 +52,6 @@ from .base import (
 )
 from .template import CtaTemplate
 
-
 STOP_STATUS_MAP = {
     Status.SUBMITTING: StopOrderStatus.WAITING,
     Status.NOTTRADED: StopOrderStatus.WAITING,
@@ -77,26 +76,26 @@ class CtaEngine(BaseEngine):
             main_engine, event_engine, APP_NAME)
 
         self.strategy_setting = {}  # strategy_name: dict
-        self.strategy_data = {}     # strategy_name: dict
+        self.strategy_data = {}  # strategy_name: dict
 
-        self.classes = {}           # class_name: stategy_class
-        self.strategies = {}        # strategy_name: strategy
+        self.classes = {}  # class_name: stategy_class
+        self.strategies = {}  # strategy_name: strategy
 
         self.symbol_strategy_map = defaultdict(
-            list)                   # vt_symbol: strategy list
+            list)  # vt_symbol: strategy list
         self.orderid_strategy_map = {}  # vt_orderid: strategy
         self.strategy_orderid_map = defaultdict(
-            set)                    # strategy_name: orderid list
+            set)  # strategy_name: orderid list
 
-        self.stop_order_count = 0   # for generating stop_orderid
-        self.stop_orders = {}       # stop_orderid: stop_order
+        self.stop_order_count = 0  # for generating stop_orderid
+        self.stop_orders = {}  # stop_orderid: stop_order
 
         self.init_executor = ThreadPoolExecutor(max_workers=3)
 
         self.rq_client = None
         self.rq_symbols = set()
 
-        self.vt_tradeids = set()    # for filtering duplicate trade
+        self.vt_tradeids = set()  # for filtering duplicate trade
 
         self.offset_converter = OffsetConverter(self.main_engine)
 
@@ -130,7 +129,7 @@ class CtaEngine(BaseEngine):
             self.write_log("RQData数据接口初始化成功")
 
     def query_bar_from_rq(
-        self, symbol: str, exchange: Exchange, interval: Interval, start: datetime, end: datetime
+            self, symbol: str, exchange: Exchange, interval: Interval, start: datetime, end: datetime
     ):
         """
         Query bar data from RQData.
@@ -234,10 +233,10 @@ class CtaEngine(BaseEngine):
                 continue
 
             long_triggered = (
-                stop_order.direction == Direction.LONG and tick.last_price >= stop_order.price
+                    stop_order.direction == Direction.LONG and tick.last_price >= stop_order.price
             )
             short_triggered = (
-                stop_order.direction == Direction.SHORT and tick.last_price <= stop_order.price
+                    stop_order.direction == Direction.SHORT and tick.last_price <= stop_order.price
             )
 
             if long_triggered or short_triggered:
@@ -288,15 +287,15 @@ class CtaEngine(BaseEngine):
                     self.put_stop_order_event(stop_order)
 
     def send_server_order(
-        self,
-        strategy: CtaTemplate,
-        contract: ContractData,
-        direction: Direction,
-        offset: Offset,
-        price: float,
-        volume: float,
-        type: OrderType,
-        lock: bool
+            self,
+            strategy: CtaTemplate,
+            contract: ContractData,
+            direction: Direction,
+            offset: Offset,
+            price: float,
+            volume: float,
+            type: OrderType,
+            lock: bool
     ):
         """
         Send a new order to server.
@@ -337,14 +336,14 @@ class CtaEngine(BaseEngine):
         return vt_orderids
 
     def send_limit_order(
-        self,
-        strategy: CtaTemplate,
-        contract: ContractData,
-        direction: Direction,
-        offset: Offset,
-        price: float,
-        volume: float,
-        lock: bool
+            self,
+            strategy: CtaTemplate,
+            contract: ContractData,
+            direction: Direction,
+            offset: Offset,
+            price: float,
+            volume: float,
+            lock: bool
     ):
         """
         Send a limit order to server.
@@ -361,14 +360,14 @@ class CtaEngine(BaseEngine):
         )
 
     def send_server_stop_order(
-        self,
-        strategy: CtaTemplate,
-        contract: ContractData,
-        direction: Direction,
-        offset: Offset,
-        price: float,
-        volume: float,
-        lock: bool
+            self,
+            strategy: CtaTemplate,
+            contract: ContractData,
+            direction: Direction,
+            offset: Offset,
+            price: float,
+            volume: float,
+            lock: bool
     ):
         """
         Send a stop order to server.
@@ -388,13 +387,13 @@ class CtaEngine(BaseEngine):
         )
 
     def send_local_stop_order(
-        self,
-        strategy: CtaTemplate,
-        direction: Direction,
-        offset: Offset,
-        price: float,
-        volume: float,
-        lock: bool
+            self,
+            strategy: CtaTemplate,
+            direction: Direction,
+            offset: Offset,
+            price: float,
+            volume: float,
+            lock: bool
     ):
         """
         Create a new local stop order.
@@ -458,14 +457,14 @@ class CtaEngine(BaseEngine):
         self.put_stop_order_event(stop_order)
 
     def send_order(
-        self,
-        strategy: CtaTemplate,
-        direction: Direction,
-        offset: Offset,
-        price: float,
-        volume: float,
-        stop: bool,
-        lock: bool
+            self,
+            strategy: CtaTemplate,
+            direction: Direction,
+            offset: Offset,
+            price: float,
+            volume: float,
+            stop: bool,
+            lock: bool
     ):
         """
         """
@@ -510,11 +509,11 @@ class CtaEngine(BaseEngine):
         return self.engine_type
 
     def load_bar(
-        self,
-        vt_symbol: str,
-        days: int,
-        interval: Interval,
-        callback: Callable[[BarData], None]
+            self,
+            vt_symbol: str,
+            days: int,
+            interval: Interval,
+            callback: Callable[[BarData], None]
     ):
         """"""
         symbol, exchange = extract_vt_symbol(vt_symbol)
@@ -539,7 +538,7 @@ class CtaEngine(BaseEngine):
             bars = self.query_bar_from_rq(symbol, exchange, interval, start, end)
 
         if not bars:
-            bars = database_manager.load_bar_data(
+            bars = mongo_manager.load_bar_data(
                 symbol=symbol,
                 exchange=exchange,
                 interval=interval,
@@ -551,17 +550,17 @@ class CtaEngine(BaseEngine):
             callback(bar)
 
     def load_tick(
-        self,
-        vt_symbol: str,
-        days: int,
-        callback: Callable[[TickData], None]
+            self,
+            vt_symbol: str,
+            days: int,
+            callback: Callable[[TickData], None]
     ):
         """"""
         symbol, exchange = extract_vt_symbol(vt_symbol)
         end = datetime.now()
         start = end - timedelta(days)
 
-        ticks = database_manager.load_tick_data(
+        ticks = mongo_manager.load_tick_data(
             symbol=symbol,
             exchange=exchange,
             start=start,
@@ -572,7 +571,7 @@ class CtaEngine(BaseEngine):
             callback(tick)
 
     def call_strategy_func(
-        self, strategy: CtaTemplate, func: Callable, params: Any = None
+            self, strategy: CtaTemplate, func: Callable, params: Any = None
     ):
         """
         Call function of a strategy and catch any exception raised.
@@ -590,7 +589,7 @@ class CtaEngine(BaseEngine):
             self.write_log(msg, strategy)
 
     def add_strategy(
-        self, class_name: str, strategy_name: str, vt_symbol: str, setting: dict
+            self, class_name: str, strategy_name: str, vt_symbol: str, setting: dict
     ):
         """
         Add a new strategy.
@@ -794,7 +793,7 @@ class CtaEngine(BaseEngine):
         Sync strategy data into json file.
         """
         data = strategy.get_variables()
-        data.pop("inited")      # Strategy status (inited, trading) should not be synced.
+        data.pop("inited")  # Strategy status (inited, trading) should not be synced.
         data.pop("trading")
 
         self.strategy_data[strategy.strategy_name] = data

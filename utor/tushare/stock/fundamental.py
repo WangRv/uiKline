@@ -13,7 +13,7 @@ from lxml import etree
 import re
 import time
 v = pd.__version__ 
-if int(v.split('.')[1])>=25:
+if int(v.split('.')[1])>=0:
     from io import StringIO
 else:    
     from pandas.compat import StringIO

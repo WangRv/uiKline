@@ -365,7 +365,7 @@ class BacktesterEngine(BaseEngine):
                 data = rqdata_client.query_history(req)
 
             if data:
-                database_manager.save_bar_data(data)
+                mongo_manager.save_bar_data(data)
                 self.write_log(f"{vt_symbol}-{interval}历史数据下载完成")
             else:
                 self.write_log(f"数据下载失败，无法获取{vt_symbol}的历史数据")

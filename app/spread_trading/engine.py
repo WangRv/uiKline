@@ -5,6 +5,7 @@ from typing import List, Dict, Set, Callable, Any, Type
 from collections import defaultdict
 from copy import copy
 from pathlib import Path
+from threading import Thread
 
 from vnpy.event import EventEngine, Event
 from vnpy.trader.engine import BaseEngine, MainEngine
@@ -79,7 +80,7 @@ class SpreadEngine(BaseEngine):
         self.event_engine.put(event)
 
 
-class SpreadDataEngine:
+class Old_SpreadDataEngine:
     """"""
     setting_filename = "spread_trading_setting.json"
 
@@ -294,7 +295,7 @@ class SpreadDataEngine:
         return list(self.spreads.values())
 
 
-class SpreadAlgoEngine:
+class Old_SpreadAlgoEngine:
     """"""
     algo_class = SpreadTakerAlgo
 
@@ -549,7 +550,7 @@ class SpreadAlgoEngine:
         return self.main_engine.get_contract(vt_symbol)
 
 
-class SpreadStrategyEngine:
+class Old_SpreadStrategyEngine:
     """"""
 
     setting_filename = "spraed_trading_strategy.json"
@@ -762,7 +763,7 @@ class SpreadStrategyEngine:
         strategy = strategy_class(self, strategy_name, spread, setting)
         self.strategies[strategy_name] = strategy
 
-        # Add vt_symbol to strategy map.
+        # Add vt_symbol to strategy map. # First instance that it is empty list.
         strategies = self.spread_strategy_map[spread_name]
         strategies.append(strategy)
 
@@ -995,3 +996,67 @@ class SpreadStrategyEngine:
             subject = "价差策略引擎"
 
         self.main_engine.send_email(subject, msg)
+
+
+class SpreadDataEngine(Old_SpreadDataEngine):
+    def register_event(self) -> None:
+        self.event_engine.register(EVENT_TICK, self.process_tick_event)
+        self.event_engine.register(EVENT_CONTRACT, self.process_contract_event)
+
+
+class SpreadStrategyEngine(Old_SpreadStrategyEngine):
+    """add new method:use to multi threading start initialize method """
+
+    def start_all_strategies(self):
+        for strategy in self.strategies.keys():
+            start_strategy = Thread(target=self.start_strategy, args=(strategy,))
+            start_strategy.start()
+
+    def start_strategy(self, strategy_name: str):
+        strategy = self.strategies[strategy_name]
+        if not strategy.inited:
+            self.write_log(f"策略{strategy.strategy_name}未初始化，启动初始化")
+            self.init_strategy(strategy_name)
+
+        if strategy.trading:
+            self.write_log(f"{strategy_name}已经启动，请勿重复操作")
+            return
+
+        self.call_strategy_func(strategy, strategy.on_start)
+        strategy.trading = True
+
+        self.put_strategy_event(strategy)
+
+
+class SpreadAlgoEngine(Old_SpreadAlgoEngine):
+    send_order_vt_symbol_map_spread_map = defaultdict(list)
+
+    def send_order(
+            self,
+            algo: SpreadAlgoTemplate,
+            vt_symbol: str,
+            price: float,
+            volume: float,
+            direction: Direction,
+            lock: bool
+    ) -> List[str]:
+        super(SpreadAlgoEngine, self).send_order(algo, vt_symbol, price, volume, direction, lock)
+
+        # addition vt symbol map to spread
+        self.send_order_vt_symbol_map_spread_map[vt_symbol].append(algo.spread)
+
+    def process_trade_event(self, event: Event):
+        super(SpreadAlgoEngine, self).process_trade_event(event)
+        trade = event.data
+        # use vt_symbol get first spread object then updating matching it's legs.
+        vt_symbol = trade.vt_symbol
+        spread_list = self.send_order_vt_symbol_map_spread_map.get(vt_symbol)
+        if spread_list:
+            spread = spread_list.pop(0)  # only get first
+            legs = spread.legs
+            for leg in legs:
+                # matching leg object
+                if leg.vt_symbol == vt_symbol:
+                    leg.update_position(trade)
+            spread.calculate_pos()
+            self.spread_engine.data_engine.put_pos_event(spread)

@@ -1,14 +1,15 @@
 # encoding:UTF-8
 import tushare as ts
 import datetime as dt
-from vnpy_of_python3.examples.vnpy.trader.object import \
+from vnpy.trader.object import \
     (BarData, ContractData, Exchange, Product, Interval)
-from vnpy_of_python3.examples.vnpy.trader.database import mongo_manager
+from vnpy.trader.database import mongo_manager
 
 local_symbol_to_contract = {}
 gateway_name = "ASHARE"
 
-def down_stock_contracts() -> list:
+
+def down_stock_codes() -> list:
     """get all stock codes"""
     stocks = ts.get_day_all()
     stocks_contract_list = []
@@ -93,7 +94,7 @@ def symbol_to_contract(contracts: list) -> dict:
 
 
 def save_all_stock_data():
-    all_stcok_contract = down_stock_contracts()
+    all_stcok_contract = down_stock_codes()
     for contract in all_stcok_contract:
         stock_data_list = down_stock_data(contract)
         # save
@@ -106,29 +107,25 @@ def filter_hs300_contracts(hs300_codes: list, all_stock_contracts: dict) -> dict
         hs300_contracts[code] = all_stock_contracts[code]
     return hs300_contracts
 
-
 def filter_sz50_contracts(sz50_codes: list, all_stock_contracts: dict) -> dict:
-    sz50_contracts: dict = dict()
-    for code in sz50_codes:
+    sz50_contracts:dict = dict()
+    for code  in sz50_codes:
         sz50_contracts[code] = all_stock_contracts[code]
     return sz50_contracts
 
-
 def extract_hs300_contracts() -> dict:
-    all_stock_contract = down_stock_contracts()
+    all_stock_contract = down_stock_codes()
     stocks_dict = symbol_to_contract(all_stock_contract)
     hs300_codes = down_load_hs300_stock_codes()
     hs300_contracts = filter_hs300_contracts(hs300_codes, stocks_dict)
     return hs300_contracts
 
-
-def extract_sz50_contracts() -> dict:
-    all_stock_contract = down_stock_contracts()
+def extract_sz50_contracts()->dict:
+    all_stock_contract = down_stock_codes()
     stocks_dict = symbol_to_contract(all_stock_contract)
     sz50_codes = down_load_sz50_stock_codes()
-    sz50_contracts = filter_sz50_contracts(sz50_codes, stocks_dict)
+    sz50_contracts = filter_sz50_contracts(sz50_codes,stocks_dict)
     return sz50_contracts
-
 
 if __name__ == '__main__':
     print(extract_sz50_contracts())

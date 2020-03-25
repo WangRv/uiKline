@@ -66,9 +66,9 @@ class RecorderEngine(BaseEngine):
                 task_type, data = task
 
                 if task_type == "tick":
-                    database_manager.save_tick_data([data])
+                    mongo_manager.save_tick_data([data])
                 elif task_type == "bar":
-                    database_manager.save_bar_data([data])
+                    mongo_manager.save_bar_data([data])
 
             except Empty:
                 continue

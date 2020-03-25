@@ -10,7 +10,7 @@ from copy import copy
 from PyQt5 import QtCore, QtGui, QtWidgets
 
 from vnpy.event import Event, EventEngine
-from ..constant import Direction, Exchange, Offset, OrderType
+from vnpy.trader.constant import Direction, Exchange, Offset, OrderType
 from ..engine import MainEngine
 from ..event import (
     EVENT_TICK,
@@ -23,7 +23,6 @@ from ..event import (
 from ..object import OrderRequest, SubscribeRequest
 from ..utility import load_json, save_json
 from ..setting import SETTING_FILENAME, SETTINGS
-
 
 COLOR_LONG = QtGui.QColor("red")
 COLOR_SHORT = QtGui.QColor("green")
@@ -401,6 +400,10 @@ class TradeMonitor(BaseMonitor):
         "price": {"display": "价格", "cell": BaseCell, "update": False},
         "volume": {"display": "数量", "cell": BaseCell, "update": False},
         "time": {"display": "时间", "cell": BaseCell, "update": False},
+        # @todo addition new column
+        "profit_loss": {"display": "盈亏", "cell": PnlCell, "update": True},
+        "service_change": {"display": "手续费", "cell": BaseCell, "update": False},
+
         "gateway_name": {"display": "接口", "cell": BaseCell, "update": False},
     }
 
@@ -424,6 +427,13 @@ class OrderMonitor(BaseMonitor):
         "price": {"display": "价格", "cell": BaseCell, "update": False},
         "volume": {"display": "总数量", "cell": BaseCell, "update": True},
         "traded": {"display": "已成交", "cell": BaseCell, "update": True},
+        # @todo addition new column
+        "trader_volume": {"display": "成交量", "cell": BaseCell, "update": True},
+        "trader_average_price": {"display": "成交均价", "cell": BaseCell, "update": True},
+        "profit_loss": {"display": "盈亏", "cell": PnlCell, "update": True},
+        "service_change": {"display": "手续费", "cell": BaseCell, "update": True},
+        "finish_time": {"display": "成交时间", "cell": TimeCell, "update": True},
+
         "status": {"display": "状态", "cell": EnumCell, "update": True},
         "time": {"display": "时间", "cell": BaseCell, "update": True},
         "gateway_name": {"display": "接口", "cell": BaseCell, "update": False},
@@ -466,6 +476,14 @@ class PositionMonitor(BaseMonitor):
         "price": {"display": "均价", "cell": BaseCell, "update": False},
         "pnl": {"display": "盈亏", "cell": PnlCell, "update": True},
         "gateway_name": {"display": "接口", "cell": BaseCell, "update": False},
+        # new columns
+        # "margin": {"display": "占用", "cell": BaseCell, "update": True},
+        # "margin_ratio": {"display": "占用率", "cell": BaseCell, "update": True},
+        # "risk_degree": {"display": "风险度", "cell": BaseCell, "update": True},
+        # "adj_position": {"display": "真实持仓", "cell": BaseCell, "update": True},
+        # "adj_profit": {"display": "真实盈亏", "cell": BaseCell, "update": True},
+        # "adj_balance": {"display": "真实净值", "cell": BaseCell, "update": True},
+
     }
 
 

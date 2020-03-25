@@ -19,6 +19,7 @@ def init_sql(driver: Driver, settings: dict):
 
 
 def init_nosql(driver: Driver, settings: dict):
-    from .database_mongo import init
+    # from .database_mongo import init
+    from .database_vn_mongo import init
     _database_manager = init(driver, settings=settings)
     return _database_manager

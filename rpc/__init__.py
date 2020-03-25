@@ -57,7 +57,6 @@ class RpcServer:
 
         # Publish socket (Publish–subscribe pattern)
         self.__socket_pub = self.__context.socket(zmq.PUB)
-
         # Worker thread related
         self.__active = False                               # RpcServer status
         self.__thread = None                                # RpcServer thread
@@ -266,6 +265,7 @@ class RpcClient:
     def _on_unexpected_disconnected():
         print(_("RpcServer has no response over {tolerance} seconds, please check you connection."
                 .format(tolerance=KEEP_ALIVE_TOLERANCE.total_seconds())))
+        # To set address of TCP/IP in ecs security group
 
     def callback(self, topic: str, data: Any):
         """

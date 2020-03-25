@@ -76,48 +76,6 @@ class TickData(BaseData):
         self.vt_symbol = f"{self.symbol}.{self.exchange.value}"
 
 
-# It is supporting for the python2 version
-@dataclass
-class VtTickData(TickData):
-    def __post_init__(self):
-        super(VtTickData, self).__post_init__()
-        self.vtSymbol = self.vt_symbol
-        self.lastPrice = self.last_price
-        self.lastVolume = self.last_volume
-        self.openInterest = self.open_interest
-        # convention trade data
-        self.openPrice = self.open_price
-        self.highPrice = self.high_price
-        self.lowPrice = self.low_price
-        self.preClosePrice = self.pre_close
-        self.upperLimit = self.limit_up
-        self.lowerLimit = self.limit_down
-        # five  quotation price
-        self.bidPrice1 = self.bid_price_1
-        self.bidPrice2 = self.bid_price_2
-        self.bidPrice3 = self.bid_price_3
-        self.bidPrice4 = self.bid_price_4
-        self.bidPrice5 = self.bid_price_5
-
-        self.askPrice1 = self.ask_price_1
-        self.askPrice2 = self.ask_price_2
-        self.askPrice3 = self.ask_price_3
-        self.askPrice4 = self.ask_price_4
-        self.askPrice5 = self.ask_price_5
-
-        self.bidVolume1 = self.bid_volume_1
-        self.bidVolume2 = self.bid_volume_2
-        self.bidVolume3 = self.bid_volume_3
-        self.bidVolume4 = self.bid_volume_4
-        self.bidVolume5 = self.bid_volume_5
-
-        self.askVolume1 = self.ask_volume_1
-        self.askVolume2 = self.ask_volume_2
-        self.askVolume3 = self.ask_volume_3
-        self.askVolume4 = self.ask_volume_4
-        self.askVolume5 = self.ask_volume_5
-
-
 @dataclass
 class BarData(BaseData):
     """
@@ -140,18 +98,6 @@ class BarData(BaseData):
         """"""
         self.vt_symbol = f"{self.symbol}.{self.exchange.value}"
 
-# Now It is barData which supporting for the python2 version
-@dataclass
-class VtBarData(BarData):
-    def __post_init__(self):
-        super(VtBarData, self).__post_init__() # execute old method
-        self.vtSymbol = self.vt_symbol
-        self.open  = self.open_price
-        self.high = self.high_price
-        self.low = self.low_price
-        self.close = self.close_price
-
-        self.openInterest = self.open_interest
 
 @dataclass
 class OrderData(BaseData):
@@ -172,6 +118,12 @@ class OrderData(BaseData):
     traded: float = 0
     status: Status = Status.SUBMITTING
     time: str = ""
+    # @todo addition new fields
+    trader_volume: float = 0
+    trader_average_price: float = 0
+    profit_loss: float = 0
+    service_change: float = 0
+    finish_time: datetime = datetime.now()
 
     def __post_init__(self):
         """"""
@@ -214,6 +166,10 @@ class TradeData(BaseData):
     price: float = 0
     volume: float = 0
     time: str = ""
+
+    # @todo new fields
+    profit_loss: float = 0
+    service_change: float = 0
 
     def __post_init__(self):
         """"""
@@ -332,6 +288,8 @@ class OrderRequest:
     price: float = 0
     offset: Offset = Offset.NONE
 
+
+
     def __post_init__(self):
         """"""
         self.vt_symbol = f"{self.symbol}.{self.exchange.value}"
@@ -384,3 +342,65 @@ class HistoryRequest:
     def __post_init__(self):
         """"""
         self.vt_symbol = f"{self.symbol}.{self.exchange.value}"
+
+
+# @ ADD vnpy 1.9.2版的tick bar类
+@dataclass
+class VtTickData(TickData):
+    def __post_init__(self):
+        super(VtTickData, self).__post_init__()
+        self.vtSymbol = self.vt_symbol
+        self.lastPrice = self.last_price
+        self.lastVolume = self.last_volume
+        self.openInterest = self.open_interest
+        # convention trade data
+        self.openPrice = self.open_price
+        self.highPrice = self.high_price
+        self.lowPrice = self.low_price
+        self.preClosePrice = self.pre_close
+        self.upperLimit = self.limit_up
+        self.lowerLimit = self.limit_down
+        # five  quotation price
+        self.bidPrice1 = self.bid_price_1
+        self.bidPrice2 = self.bid_price_2
+        self.bidPrice3 = self.bid_price_3
+        self.bidPrice4 = self.bid_price_4
+        self.bidPrice5 = self.bid_price_5
+
+        self.askPrice1 = self.ask_price_1
+        self.askPrice2 = self.ask_price_2
+        self.askPrice3 = self.ask_price_3
+        self.askPrice4 = self.ask_price_4
+        self.askPrice5 = self.ask_price_5
+
+        self.bidVolume1 = self.bid_volume_1
+        self.bidVolume2 = self.bid_volume_2
+        self.bidVolume3 = self.bid_volume_3
+        self.bidVolume4 = self.bid_volume_4
+        self.bidVolume5 = self.bid_volume_5
+
+        self.askVolume1 = self.ask_volume_1
+        self.askVolume2 = self.ask_volume_2
+        self.askVolume3 = self.ask_volume_3
+        self.askVolume4 = self.ask_volume_4
+        self.askVolume5 = self.ask_volume_5
+
+
+@dataclass
+class VtBarData(BarData):
+    def __post_init__(self):
+        super(VtBarData, self).__post_init__()  # execute old method
+        self.vtSymbol = self.vt_symbol
+        self.open = self.open_price
+        self.high = self.high_price
+        self.low = self.low_price
+        self.close = self.close_price
+
+        self.openInterest = self.open_interest
+
+
+# @ ADD 连续合约类
+@dataclass
+class ActiveSymbolData:
+    vt_symbol: str
+    active_symbol: str

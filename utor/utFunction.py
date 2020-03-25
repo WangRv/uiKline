@@ -1,26 +1,29 @@
 # encoding: UTF-8
 from __future__ import division
-import re,math,webbrowser,os,traceback,linecache,time,pytz,pymongo,json,multiprocessing,decimal
+import re,math,webbrowser,os,traceback,linecache,time,pytz,pymongo,json,multiprocessing,sys
+from queue import Queue, Empty
 from threading import Thread
-
+from typing import Union, Sequence, Callable
 import pandas as pd
 import numpy as np
 import talib as ta
 import datetime as dt
-
-# import matplotlib.pyplot as plt
-from pyecharts import *
+from dateutil import parser, tz
+from decimal import Decimal, ROUND_HALF_UP
 
 import statsmodels.api as sm
 from collections import OrderedDict
 from copy import deepcopy
 from functools import wraps
 
-pd.set_option('display.max_rows',50)
-pd.set_option('display.max_columns',100)
-pd.set_option('display.width', 1000)
-pd.set_option('expand_frame_repr', False)  # 当列太多时不自动换行
-pd.set_option('display.float_format', lambda x: '%.2f' % x)  # 设置表的长度、宽度 & 不采用科学计数法
+def pandas_option():
+    pd.set_option('display.max_rows',50)
+    pd.set_option('display.max_columns',100)
+    pd.set_option('display.width', 1000)
+    pd.set_option('expand_frame_repr', False)  # 当列太多时不自动换行
+    pd.set_option('display.float_format', lambda x: '%.2f' % x)  # 设置表的长度、宽度 & 不采用科学计数法
+pandas_option()
+
 
 """一、基础工具"""
 # [python2] pickle化实例方法
@@ -49,11 +52,9 @@ def python3_add_import_path(import_path):
     path_dir = os.path.dirname(__file__)
     python3_add_import_path(path_dir)
     """
-    import sys
     system_import_path = sys.path       # 系统导入路径
-    sys.path.insert(0, import_path)     # remark system_import_path[0]是运行文件的路径，应为最优先，所以要插入到第1个处
+    sys.path.insert(1, import_path)     # [REMARK] system_import_path[0]是运行文件的路径，应为最优先，所以要插入到system_import_path[1]
 
-# [python3] list化
 def map2(func, *ll):
     return list(map(func, *ll))
 
@@ -97,7 +98,7 @@ def getDirFile(path):
 def rename(path):
     pathlist = getDirFile(path)
     for dbname, filename, filepath in pathlist:
-        # notice 在这里写重命名规则
+        # [NOTICE] 在这里写重命名规则
         newfilepath = filepath + '.H5'
 
         # 重命名之前最好先断点看一下
@@ -115,7 +116,7 @@ def safepath(path):
     传入单个路径str： safepath('G://123/XBTCUSD.H5')，
     传入多个路径list：safepath(['G://123','XBTCUSD.H5'])
     """
-    # notice 文件名里不能包含'/''\'。1.windows不支持这两个字符做文件名；2.如果路径里面包含'/''\'会被拆为文件夹名
+    # [NOTICE] 文件名里不能包含'/''\'。1.windows不支持这两个字符做文件名；2.如果路径里面包含'/''\'会被拆为文件夹名
     if isinstance(path, str):
         dirpath, filename = os.path.split(path)
         if not os.path.isdir(dirpath):
@@ -133,21 +134,27 @@ def safepath(path):
         return path0
 
 
-# [numeral] 浮点数运算decimal
-def dec(x):
+# [numeral] 精确四舍五入
+def decimal_round(number, n_digits, return_float=False):
+    """使用decimal进行四舍五入。
+    官方文档：https://docs.python.org/zh-cn/3/library/decimal.html#decimal.Decimal.quantize
+    参考：https://www.kingname.info/2019/03/31/real-truth-of-round/
+
+    :param number:
+    :param n_digits: 舍入位数
+    :param return_float: True返回float，False返回Decimal
+    :return:
     """
-    decimal传入int或者str，但不能传入float。
-    如果对decimal传入float会不准确，因此需要把float转换成str再传入。
-    eg.
-    Decimal(1.45)                       # Decimal('1.4499999999999999555910790149937383830547332763671875')
-    Decimal(str(1.45'))                 # Decimal('1.45')
-    """
-    y = decimal.Decimal(str(x))
-    return y
+    digits = "{:.{}f}".format(0, n_digits)
+
+    origin_num = Decimal(str(number))
+    answer_num = origin_num.quantize(Decimal(digits), rounding=ROUND_HALF_UP)
+    if return_float:
+        answer_num = float(answer_num)
+    return answer_num
 
 # [numeral] 判断x是否为nan（可以传入单个值，也可以传入非纯数序列）
 def isnan(x):
-    # 如果传入的是
     try:
         y = np.isnan(x)
     except TypeError:
@@ -167,18 +174,20 @@ def replace_nan(ll, replacevalue):
     return list(map(lambda x: x if not math.isnan(x) else replacevalue, ll))
 
 # [list] 比较listXY的不同
-def list_compare(x,y):
-    XYSame = [i for i in x if i in y]
-    XOnly = [i for i in x if i not in y]
-    YOnly = [i for i in y if i not in x]
-    return XOnly, YOnly, XYSame
+def list_compare(x, y):
+    x_only = []
+    same = list(filter(lambda i: i if i in y else x_only.append(i), x))
+    y_only = [i for i in y if i not in same]
+    return x_only, y_only, same
 
 # [list] list/np.array的shift(np.roll会把最后的值移到第一位)
-def shift(ll, n=1):
-    if isinstance(ll, np.ndarray):
-        return pd.Series(ll).shift(n).values
-    elif isinstance(ll, list):
-        return pd.Series(ll).shift(n).tolist()
+def shift(sequence_, n=1):
+    if isinstance(sequence_, np.ndarray):
+        return pd.Series(sequence_).shift(n).values
+    elif isinstance(sequence_, list):
+        return pd.Series(sequence_).shift(n).tolist()
+    else:
+        return pd.Series(sequence_).shift(n)
 
 # [list] list去重
 def list_dropDuplicates(l):
@@ -326,8 +335,120 @@ def dataframe_reduceMem(data):
     print("This is ",100*mem_usg/start_mem_usg,"% of the initial size")
     return data, NAlist
 
+# [pandas] DataFrame内存优化函数
+def compress_dataframe(data, str_to_categorical=False):
+    """DataFrame：转换数据类型以节省内存
 
-# [datetime] 时区转换
+    :param data:
+    :param str_to_categorical: 是否把str转换为categorical
+    :return:
+    """
+    start_mem_usg = data.memory_usage().sum() / 1024**2
+
+    dtypes = data.dtypes
+    newdata = data.copy()
+    for coln, dtyp in dtypes.iteritems():
+        if ('object' in dtyp.name) and str_to_categorical:
+            newdata[coln] = pd.Categorical(newdata[coln])
+        elif 'float' in dtyp.name:
+            newdata[coln] = pd.to_numeric(newdata[coln], downcast='float')
+        elif 'int' in dtyp.name:
+            newdata[coln] = pd.to_numeric(newdata[coln], downcast='integer')
+
+    end_mem_usg = newdata.memory_usage().sum() / 1024**2
+
+    print("DataFrame Memory: {}MB to {}MB".format(start_mem_usg, end_mem_usg))
+
+    return newdata
+
+
+# [datetime] datetime转换工具
+class DatetimeTransform():
+    """datetime格式转换工具"""
+
+    def str_to_datetime(self, str_obj, str_format=None, time_zone=None, del_timezone=False):
+        """
+
+        :param str_obj: 字符串
+        :param str_format: 字符串的时间格式
+        :param time_zone: 转换时区。如果该时间没有时区、或没有此参数，则不作处理。
+        可选参数："Asia/Shanghai"/"UTC+8", "UTC"...
+        参考列表: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+        :param del_timezone: 是否删除时区信息
+        :return:
+        """
+        if str_format:
+            return dt.datetime.strptime(str_obj, str_format)
+
+        else:
+            datetime_obj = parser.parse(str_obj)
+
+            if time_zone and datetime_obj.tzinfo:    # 转换时区
+                datetime_obj = datetime_obj.astimezone(time_zone)
+
+            if del_timezone:
+                datetime_obj = datetime_obj.replace(tzinfo=None)
+
+            return datetime_obj
+
+    def datetime_to_str(self, datetime_obj, str_format: str =None):
+        # 转换类型
+        if type(datetime_obj) == dt.date:   # [REMARK] 不使用 isinstance(datetime_obj, dt.date)，因为datetime类与dt.date属同一类
+            datetime_obj = dt.datetime.combine(datetime_obj, dt.time(0, 0))
+
+        # 默认格式
+        if not str_format:
+            return datetime_obj.strftime("%Y-%m-%d %H:%M:%S.%f")
+
+        # iso格式
+        elif str_format == 'iso':
+            return datetime_obj.isoformat()
+
+        # 自定义格式
+        else:
+            return datetime_obj.strftime(str_format)
+
+    # ---------------------------------------
+    def timestamp_to_datetime(self, timestamp_obj):
+        return dt.datetime.fromtimestamp(timestamp_obj)
+
+    def datetime_to_timestamp(self, datetime_obj):
+        return datetime_obj.timestamp()
+
+    # ---------------------------------------
+    def timetuple_to_datetime(self, timetuple_obj):
+        return dt.datetime.fromtimestamp(time.mktime(timetuple_obj))
+
+    def datetime_to_timetuple(self, datetime_obj):
+        return dt.datetime.timetuple(datetime_obj)
+
+    # ---------------------------------------
+    def set_datetime_timezone(self, datetime_obj, set_timezone=None, transform_timezone=None, del_timezone=False):
+        """设置datetime时区。（可以添加默认时区和转换时区）
+
+        :param datetime_obj:
+        :param set_timezone: datetime_obj默认时区。
+        :param transform_timezone: datetime_obj转换的时区。
+        可选参数："Asia/Shanghai"/"UTC+8", "UTC"...
+        参考列表: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+        :param del_timezone: 是否删除时区信息
+        :return:
+
+        eg. 把UTC时间2019-01-01 06:00，转换为UTC+8时间2019-01-01 14:00
+        DatetimeTransform().set_datetime_timezone(dt.datetime(2019,1,1,6), set_timezone="UTC", transform_timezone="UTC+8")
+        """
+        if set_timezone:
+            datetime_obj = datetime_obj.replace(tzinfo=tz.gettz(set_timezone))
+
+        if transform_timezone:
+            datetime_obj = datetime_obj.astimezone(tz.gettz(transform_timezone))
+
+        if del_timezone:
+            datetime_obj = datetime_obj.replace(tzinfo=None)
+
+        return datetime_obj
+
+# [datetime] 时区转换【可删除】
 def turnTimezone_utc8(datetime0, timezone='UTC'):
     timezone_china = pytz.timezone("Asia/Shanghai") # 设置中国时区
     datetime1 = datetime0.replace(tzinfo=pytz.timezone(timezone)).astimezone(timezone_china)  # datetime0添加时区为timezone，然后转换为中国时区
@@ -340,7 +461,7 @@ def save_hdf(savedata, savepath, compress=False, dsname=None):
     savepath_file = safepath(savepath)
     dsname = dsname if dsname else 'data'
 
-    # 如果不压缩，直接保存；如果压缩，则取出全相等的列，保存为data['compress'][0]=dict(col:values)  # remark 因为是hdf5，且保存格式是dict，所以源数据的格式都会被保存
+    # 如果不压缩，直接保存；如果压缩，则取出全相等的列，保存为data['compress'][0]=dict(col:values)  # [REMARK] 因为是hdf5，且保存格式是dict，所以源数据的格式都会被保存
     if compress:
         savedata = deepcopy(savedata)   # deepcopy防止修改存入数据的内存
 
@@ -382,138 +503,138 @@ def read_hdf(path, dsname=None):
 
 
 """二、通用工具"""
-# [绘图] pyecharts
-class plotPyecharts(object):
-    """
-    subgraph：子图
-    layer：图层
-    Overlap：一幅子图里含有多个图层
-    Grid：一幅网页图里含有多个子图
+# # [绘图] pyecharts
+# from pyecharts import *
+# class plotPyecharts(object):
+#     """
+#     subgraph：子图
+#     layer：图层
+#     Overlap：一幅子图里含有多个图层
+#     Grid：一幅网页图里含有多个子图
+#
+#     from vnpy.utor.utFunction import *
+#     data = pd.read_csv(r'G:\IF888_1D.CSV')
+#     data['datetime'] = data['datetime'].map(str)  # [NOTICE] datetime必须是str格式
+#     pic = plotPyecharts()
+#     pic.plot(1, data['datetime'], data[['open','close','low','high']], legend='kline', type=Kline)
+#     pic.plot(2, data['datetime'], data['open'], legend='open', type=Line)
+#     pic.plot(len(pic.pool)+1, data['datetime'], data['capital'], legend='capital', type=Line)
+#     pic.render(page_title='KLine')
+#     """
+#     # [NOTICE] 传入的数据必须是str或者float/int格式
+#     def __init__(self):
+#         self.pool = OrderedDict()   # 图层池 {子图1: {图层编号1:图层实例1, 图层编号2:图层实例2, ...}, 子图2: {图层编号1:图层实例1, 图层编号2:图层实例2, ...}}
+#         self.layerID = 0            # 初始图层编号
+#
+#         self.initsetting = {'width':1600, 'height':900}
+#         self.layersetting = {'is_datazoom_show':True, 'datazoom_type':'both',               # 使用滚轮缩放
+#                              'datazoom_range':[0,100],                                      # 初始图像缩放范围
+#                             'tooltip_axispointer_type':'cross', 'tooltip_tragger':'axis',   # 使用十字线触发提示框
+#                             'yaxis_min':'dataMin','yaxis_max':'dataMax',                    # 图像自适应最小值
+#                              'datazoom_xaxis_index':[],                                     # 多图缩放名单（逐步添加）
+#                             }
+#
+#     # 1.传入图层数据：把传入的图层参数转换为dict形式存放在缓存.
+#     def plot(self, subgraph, x, y, legend=None, type=None, **kwargs):
+#         """
+#         :param subgraph: 子图
+#         :param x: 横坐标。如果x=None，则x为range(y)。
+#         :param y: 数据
+#         :param legend: 图例名，str
+#         :param type: Line/Kline/...
+#         :param kwargs: 其他图层设定
+#         """
+#         if not type:
+#             type = Line
+#
+#         # 图层缓存
+#         self.layerID += 1                           # 图层编号
+#         if subgraph not in list(self.pool.keys()):  # 在图层池创建子图缓存
+#             self.pool[subgraph] = OrderedDict()
+#
+#         # 图层设定
+#         legend = str(self.layerID) if legend is None else legend                                                        # 设置图例名
+#         self.layersetting['datazoom_xaxis_index'].append(subgraph-1)                                                    # 在多图缩放名单添加子图
+#         self.pool[subgraph][self.layerID] = dict(subgraph=subgraph, x=x, y=y, legend=legend, type=type, kwargs=kwargs)  # 把所有参数存入图层池（以dict形式）
+#         return self
+#
+#     # 2.建立图层实例layer：读取缓存的图层参数，建立图层实例
+#     def addLayer(self, layerdict):
+#         # 数据转换
+#         if layerdict['x'] is None:                                                  # 如果x=None, 则把x转为y的索引序列
+#             layerdict['x'] = range2(len(layerdict['y']))
+#         if layerdict['type']==Kline and isinstance(layerdict['y'], pd.DataFrame):   # 自动把KLine的DataFrame转换为list
+#             layerdict['y'] = layerdict['y'].values.tolist()
+#
+#         layer = layerdict['type'](**self.initsetting)                               # 建立图层实例
+#         layersetting = dict(self.layersetting,**layerdict['kwargs'])                # 设入图层设定
+#         if len(layerdict['y'])>20000:                                               # 设定缩放范围（默认在30000个数据点以内）
+#             layersetting['datazoom_range'] = [0,20000/len(layerdict['y'])*100]
+#         layer.add(name=layerdict['legend'], x_axis=layerdict['x'], y_axis=layerdict['y'], **layersetting)
+#         return layer
+#
+#     # 3.合成Grid图：把各个图层实例合成到Grid图
+#     def addGrid(self, piclist, gridratio=None):
+#         gridratio = [(10.0 / len(piclist))]*len(piclist) if gridratio is None else gridratio
+#         gridnum = 0
+#         grid = Grid(**self.initsetting)
+#         for picgrid in piclist:
+#             grid_top = sum(gridratio[:gridnum]) * 10
+#             grid_bottom = sum(gridratio[gridnum+1:]) * 10
+#             gridnum += 1
+#
+#             if grid_top == 0:
+#                 grid.add(picgrid, grid_bottom='%s%%'%(grid_bottom))
+#             elif grid_bottom == 0:
+#                 grid.add(picgrid, grid_top='%s%%'%(grid_top))
+#             else:
+#                 grid.add(picgrid, grid_top='%s%%'%(grid_top), grid_bottom='%s%%'%(grid_bottom))
+#         return grid
+#
+#     # 4.执行合成并保存（实际执行函数，前面1,2,3部分在这部分执行）
+#     def render(self, page_title='Echarts', gridratio=None, open_now=True, dirpath=None):
+#         """
+#         :param page_title: html文件名 & 网页标签名
+#         :param gridratio:  子图比例
+#         :param open_now:   是否立刻打开html
+#         :return:
+#         """
+#         # todo 各子图比例可以不用在render里统一gridratio，而是在创建子图时加入参数ratio（ratio可以等于10~100），然后在render时把各个子图的ratio加总除权，得到各子图的比例。
+#         # 初始化
+#         subgraphpool = OrderedDict()                                        # 缓存池
+#         self.initsetting['page_title'] = page_title                         # html文件名 & 网页标签名
+#         every_legend_pos = (self.initsetting['width']/(self.layerID+1))# 图例位置 = (图片宽度/总图层数) * 图层编码layerID
+#
+#         # Overlap图层合成子图：如果子图图层数大于1，合成为Overlap并保存到subgraphpool，否则直接保存到subgraphpool
+#         for subgraph in list(self.pool.keys()):
+#             if len(self.pool[subgraph]) > 1:
+#                 overlap = Overlap(**self.initsetting)                                       # Overlap里设入initsetting
+#                 for layerID in list(self.pool[subgraph].keys()):
+#                     self.pool[subgraph][layerID]['kwargs']['legend_pos'] = (layerID) * every_legend_pos # 当前图层的图例位置
+#                     layer = self.addLayer(self.pool[subgraph][layerID])                     # 建立图层实例
+#                     overlap.add(layer)
+#                 subgraphpool[subgraph] = overlap
+#             else:
+#                 for layerID in list(self.pool[subgraph].keys()):
+#                     self.pool[subgraph][layerID]['kwargs']['legend_pos'] = (layerID) * every_legend_pos
+#                     layer = self.addLayer(self.pool[subgraph][layerID])
+#                     subgraphpool[subgraph] = layer
+#
+#         # Grid子图合成网页：如果图层数大于1，那么合成为Grid；否则直接保存
+#         if len(subgraphpool.keys()) > 1:
+#             savefile = self.addGrid(piclist=list(subgraphpool.values()), gridratio=gridratio)
+#         else:
+#             savefile = list(subgraphpool.values())[0]
+#
+#         # 保存并打开
+#         if dirpath:
+#             htmlpath = safepath([dirpath, page_title+'.html'])
+#         else:
+#             htmlpath = page_title+'.html'
+#         savefile.render(htmlpath)
+#         if open_now:
+#             webbrowser.open(htmlpath)
 
-    from vnpy.utor.utFunction import *
-    data = pd.read_csv(r'G:\IF888_1D.CSV')
-    data['datetime'] = data['datetime'].map(str)  # notice datetime必须是str格式
-    pic = plotPyecharts()
-    pic.plot(1, data['datetime'], data[['open','close','low','high']], legend='kline', type=Kline)
-    pic.plot(2, data['datetime'], data['open'], legend='open', type=Line)
-    pic.plot(len(pic.pool)+1, data['datetime'], data['capital'], legend='capital', type=Line)
-    pic.render(page_title='KLine')
-    """
-    # notice 传入的数据必须是str或者float/int格式
-    def __init__(self):
-        self.pool = OrderedDict()   # 图层池 {子图1: {图层编号1:图层实例1, 图层编号2:图层实例2, ...}, 子图2: {图层编号1:图层实例1, 图层编号2:图层实例2, ...}}
-        self.layerID = 0            # 初始图层编号
-
-        self.initsetting = {'width':1600, 'height':900}
-        self.layersetting = {'is_datazoom_show':True, 'datazoom_type':'both',               # 使用滚轮缩放
-                             'datazoom_range':[0,100],                                      # 初始图像缩放范围
-                            'tooltip_axispointer_type':'cross', 'tooltip_tragger':'axis',   # 使用十字线触发提示框
-                            'yaxis_min':'dataMin','yaxis_max':'dataMax',                    # 图像自适应最小值
-                             'datazoom_xaxis_index':[],                                     # 多图缩放名单（逐步添加）
-                            }
-
-    # 1.传入图层数据：把传入的图层参数转换为dict形式存放在缓存.
-    def plot(self, subgraph, x, y, legend=None, type=None, **kwargs):
-        """
-        :param subgraph: 图层
-        :param x: 横坐标。如果x=None，则x为range(y)。
-        :param y: 数据
-        :param legend: 图例名，str
-        :param type: Line/Kline/...
-        :param kwargs: 其他图层设定
-        """
-        if not type:
-            type = Line
-
-        # 图层缓存
-        self.layerID += 1                           # 图层编号
-        if subgraph not in list(self.pool.keys()):  # 在图层池创建子图缓存
-            self.pool[subgraph] = OrderedDict()
-
-        # 图层设定
-        legend = str(self.layerID) if legend is None else legend                                                        # 设置图例名
-        self.layersetting['datazoom_xaxis_index'].append(subgraph-1)                                                    # 在多图缩放名单添加子图
-        self.pool[subgraph][self.layerID] = dict(subgraph=subgraph, x=x, y=y, legend=legend, type=type, kwargs=kwargs)  # 把所有参数存入图层池（以dict形式）
-        return self
-
-    # 2.建立图层实例layer：读取缓存的图层参数，建立图层实例
-    def addLayer(self, layerdict):
-        # 数据转换
-        if layerdict['x'] is None:                                                  # 如果x=None, 则把x转为y的索引序列
-            layerdict['x'] = range2(len(layerdict['y']))
-        if layerdict['type']==Kline and isinstance(layerdict['y'], pd.DataFrame):   # 自动把KLine的DataFrame转换为list
-            layerdict['y'] = layerdict['y'].values.tolist()
-
-        layer = layerdict['type'](**self.initsetting)                               # 建立图层实例
-        layersetting = dict(self.layersetting,**layerdict['kwargs'])                # 设入图层设定
-        if len(layerdict['y'])>20000:                                               # 设定缩放范围（默认在30000个数据点以内）
-            layersetting['datazoom_range'] = [0,20000/len(layerdict['y'])*100]
-        layer.add(name=layerdict['legend'], x_axis=layerdict['x'], y_axis=layerdict['y'], **layersetting)
-        return layer
-
-    # 3.合成Grid图：把各个图层实例合成到Grid图
-    def addGrid(self, piclist, gridratio=None):
-        gridratio = [(10.0 / len(piclist))]*len(piclist) if gridratio is None else gridratio
-        gridnum = 0
-        grid = Grid(**self.initsetting)
-        for picgrid in piclist:
-            grid_top = sum(gridratio[:gridnum]) * 10
-            grid_bottom = sum(gridratio[gridnum+1:]) * 10
-            gridnum += 1
-
-            if grid_top == 0:
-                grid.add(picgrid, grid_bottom='%s%%'%(grid_bottom))
-            elif grid_bottom == 0:
-                grid.add(picgrid, grid_top='%s%%'%(grid_top))
-            else:
-                grid.add(picgrid, grid_top='%s%%'%(grid_top), grid_bottom='%s%%'%(grid_bottom))
-        return grid
-
-    # 4.执行合成并保存（实际执行函数，前面1,2,3部分在这部分执行）
-    def render(self, page_title='Echarts', gridratio=None, open_now=True, dirpath=None):
-        """
-        :param page_title: html文件名 & 网页标签名
-        :param gridratio:  子图比例
-        :param open_now:   是否立刻打开html
-        :return:
-        """
-        # todo 各子图比例可以不用在render里统一gridratio，而是在创建子图时加入参数ratio（ratio可以等于10~100），然后在render时把各个子图的ratio加总除权，得到各子图的比例。
-        # 初始化
-        subgraphpool = OrderedDict()                                        # 缓存池
-        self.initsetting['page_title'] = page_title                         # html文件名 & 网页标签名
-        every_legend_pos = (self.initsetting['width']/(self.layerID+1))# 图例位置 = (图片宽度/总图层数) * 图层编码layerID
-
-        # Overlap图层合成子图：如果子图图层数大于1，合成为Overlap并保存到subgraphpool，否则直接保存到subgraphpool
-        for subgraph in list(self.pool.keys()):
-            if len(self.pool[subgraph]) > 1:
-                overlap = Overlap(**self.initsetting)                                       # Overlap里设入initsetting
-                for layerID in list(self.pool[subgraph].keys()):
-                    self.pool[subgraph][layerID]['kwargs']['legend_pos'] = (layerID) * every_legend_pos # 当前图层的图例位置
-                    layer = self.addLayer(self.pool[subgraph][layerID])                     # 建立图层实例
-                    overlap.add(layer)
-                subgraphpool[subgraph] = overlap
-            else:
-                for layerID in list(self.pool[subgraph].keys()):
-                    self.pool[subgraph][layerID]['kwargs']['legend_pos'] = (layerID) * every_legend_pos
-                    layer = self.addLayer(self.pool[subgraph][layerID])
-                    subgraphpool[subgraph] = layer
-
-        # Grid子图合成网页：如果图层数大于1，那么合成为Grid；否则直接保存
-        if len(subgraphpool.keys()) > 1:
-            savefile = self.addGrid(piclist=list(subgraphpool.values()), gridratio=gridratio)
-        else:
-            savefile = list(subgraphpool.values())[0]
-
-        # 保存并打开
-        if dirpath:
-            htmlpath = safepath([dirpath, page_title+'.html'])
-        else:
-            htmlpath = page_title+'.html'
-        savefile.render(htmlpath)
-        if open_now:
-            webbrowser.open(htmlpath)
-
-# [绘图] pyecharts数据点记录类
 class pyechart_markPoint():
     def __init__(self):
         self.xList = []
@@ -529,6 +650,279 @@ class pyechart_markPoint():
 
     def get(self):
         return self.markPointList
+
+# # [绘图] pyecharts
+# import pyecharts.options as opts
+# from pyecharts.charts import Kline, Line, Grid
+# class PlotPyecharts3():
+#     """
+#     x_data = ["2017-7-{}".format(i + 1) for i in range(8)]
+#     data = [
+#         [2320.26, 2320.26, 2287.3, 2362.94],
+#         [2300, 2291.3, 2288.26, 2308.38],
+#         [2295.35, 2346.5, 2295.35, 2345.92],
+#         [2347.22, 2358.98, 2337.35, 2363.8],
+#         [2360.75, 2382.48, 2347.89, 2383.76],
+#         [2383.43, 2385.42, 2371.23, 2391.82],
+#         [2377.41, 2419.02, 2369.57, 2421.15],
+#         [2425.92, 2428.15, 2417.58, 2440.38]
+#     ]
+#     ma = [l[1] for l in data]
+#
+#     pic = PlotPyecharts3('test_picture')
+#     pic.plot(1, x_data, data, item_type='Kline', legend='CU')
+#     pic.plot(1, x_data, ma, legend='ma1')
+#     pic.plot(2, x_data, ma, grid_ratio=50, legend='ma2')
+#     pic.plot(3, x_data, data, item_type='Kline', grid_ratio=30)
+#     pic.render()
+#     """
+#
+#     def __init__(self, title=None):
+#         self.subgraph_layer_dict = OrderedDict()    # {subgraph_name: top_layer}
+#         self.grid_ratio_dict = OrderedDict()
+#
+#         # init variable
+#         self.layer_id = 0
+#
+#         if not title:
+#             title = "Echart"
+#         self.title = title
+#
+#         # self-adapting screen
+#         try:
+#             import win32api, win32con
+#             width = win32api.GetSystemMetrics(win32con.SM_CXSCREEN) * 0.95
+#             height = win32api.GetSystemMetrics(win32con.SM_CYSCREEN) * 0.85
+#         except:
+#             width = 1600
+#             height = 900
+#
+#         # init setting
+#         self.init_setting = opts.InitOpts(width=f"{width}px", height=f"{height}px", page_title=self.title)
+#
+#         self.series_setting = dict(
+#             # 设置标签
+#             label_opts=opts.LabelOpts(is_show=False)    # 不在图中显示每个数据点的标签
+#         )
+#
+#         self.global_setting = dict(
+#             # 设置x轴（category表示离散数据轴）
+#             xaxis_opts=opts.AxisOpts(
+#                 is_scale=True,      # 是否强制包含零刻度（只对type_="value"的有用）
+#                 type_="category"    # 数轴类型
+#             ),
+#
+#             # 设置y轴
+#             yaxis_opts=opts.AxisOpts(
+#                 is_scale=True,
+#                 splitarea_opts=opts.SplitAreaOpts(is_show=True, areastyle_opts=opts.AreaStyleOpts(opacity=1)),
+#             ),
+#
+#             # 坐标轴指示器
+#             axispointer_opts=opts.AxisPointerOpts(
+#                 is_show=True,
+#                 link=[{"xAxisIndex": "all"}],
+#                 label=opts.LabelOpts(background_color="#777"),
+#             ),
+#
+#             # 提示框
+#             tooltip_opts=opts.TooltipOpts(
+#                 trigger="axis",                 # 触发类型：axis表示坐标轴触发
+#                 axis_pointer_type="cross",      # 指示器类型
+#             ),
+#
+#             # 缩放
+#             datazoom_opts=[
+#                 opts.DataZoomOpts(
+#                     is_show=False,      # 是否显示
+#                     type_="inside",     #
+#                     # xaxis_index=[0, 1],
+#                     range_start=0,
+#                     range_end=100,
+#                 ),
+#                 opts.DataZoomOpts(
+#                     is_show=True,
+#                     # xaxis_index=[0, 1],
+#                     type_="slider",
+#                     pos_top="90%",
+#                     range_start=0,
+#                     range_end=100,
+#                 )
+#             ],
+#         )
+#
+#     def plot(
+#             self,
+#             subgraph_name: Union[str, int],
+#             x_data: Sequence,
+#             y_data: Sequence,
+#             legend: str = None,
+#             item_type: str = None,
+#             grid_ratio: int = 100,
+#             series_opts: dict = None,
+#             global_opts: dict = None,
+#             mark_point: opts.MarkPointOpts = None
+#     ):
+#         """
+#
+#         :param subgraph_name: 子图名
+#         :param x_data: X轴数据
+#         :param y_data: Y轴数据
+#         :param legend: 图例名
+#         :param item_type: 图层类型。 Kline, Line, Grid。
+#         :param grid_ratio: 子图比例
+#         :param series_opts: series配置项
+#         :param global_opts: global配置项
+#         :param mark_point: 标记点
+#         :return:
+#         """
+#         # init setting
+#         self.layer_id += 1
+#
+#         if not legend:
+#             legend = str(self.layer_id)
+#
+#         if not item_type:
+#             item_type = Line
+#         else:
+#             item_type = eval(item_type)
+#
+#         # update setting dict
+#         series_setting = deepcopy(self.series_setting)
+#         if series_opts:
+#             for k,v in series_opts.items():
+#                 series_setting.update({k:v})
+#         if mark_point:
+#             series_setting.update({'markpoint_opts': mark_point})
+#
+#         global_setting = deepcopy(self.global_setting)
+#         global_setting.update(dict(legend_opts=opts.LegendOpts(pos_left=f"{15+self.layer_id*10}%")))
+#         if global_opts:
+#             for k,v in global_opts.items():
+#                 global_setting.update({k:v})
+#
+#         # transform data type to list
+#         if isinstance(x_data, pd.Series) or isinstance(x_data, np.ndarray):
+#             x_data = x_data.tolist()
+#
+#         if isinstance(y_data, pd.Series) or isinstance(y_data, np.ndarray):
+#             y_data = y_data.tolist()
+#         elif isinstance(y_data, pd.DataFrame):
+#             y_data = y_data.values.tolist()
+#
+#         # creat layer
+#         layer = item_type(self.init_setting)
+#         layer.add_xaxis(xaxis_data=x_data)
+#         layer.add_yaxis(series_name=legend, y_axis=y_data)
+#         layer.set_series_opts(**series_setting)
+#         layer.set_global_opts(**global_setting)
+#
+#         # cache layer / overlap layer
+#         top_layer = self.subgraph_layer_dict.get(subgraph_name)
+#         if top_layer:
+#             top_layer.overlap(layer)
+#         else:
+#             self.subgraph_layer_dict[subgraph_name] = layer
+#
+#         # cache subgraph's grid ratio (default=100)
+#         grid_ratio_old = self.grid_ratio_dict.setdefault(subgraph_name, 100)
+#         if grid_ratio != 100 and grid_ratio_old == 100:
+#             self.grid_ratio_dict[subgraph_name] = grid_ratio
+#
+#     def render(self, grid_ratio=None, show=True):
+#         # init setting
+#         subgraph_count = len(self.subgraph_layer_dict)
+#
+#         # creat chart
+#         if subgraph_count == 1:
+#             chart = list(self.subgraph_layer_dict.values())[0]
+#
+#         else:
+#             grid_ratio_set = self._calculate_grid_ratio_set(grid_ratio)
+#
+#             chart = Grid(self.init_setting)
+#             for subgraph_numer, layer in enumerate(self.subgraph_layer_dict.values()):
+#                 s, e = grid_ratio_set[subgraph_numer]
+#                 chart.add(layer, grid_opts=opts.GridOpts(pos_top=f'{s}%', pos_bottom=f'{e}%'))
+#
+#             # update grid dataZoom
+#             dataZoom_setting = chart.options.get('dataZoom', [])
+#             for dataZoom in dataZoom_setting:
+#                 dataZoom.opts['xAxisIndex'] = list(range(subgraph_count))
+#
+#         # render
+#         page_title = f'{self.title}.html'
+#         chart.render(page_title)
+#
+#         if show:
+#             webbrowser.open(page_title)
+#
+#     def _calculate_grid_ratio_set(self, grid_ratio):
+#         """自适应计算grid比例
+#
+#         显示范围为“0% ~ 90%”（要预留最下面的10%给缩放条）， 子图间间隔5%。
+#         """
+#         grid_gap = 5 / 2    # 子图间间隔5%，因此上下图层间隔为2.5%
+#         grid_bottom = 90
+#
+#         if not grid_ratio:
+#             grid_ratio = list(self.grid_ratio_dict.values())
+#             grid_ratio = list(np.array(grid_ratio) * (100 / sum(grid_ratio)))   # 转化为总和为100的比例数列
+#
+#         grid_ratio = np.cumsum(grid_ratio)
+#         grid_ratio = grid_ratio * (grid_bottom / 100)   # [REMARK] 不能用*=，因为会出现numpy类型转换error
+#         grid_ratio = grid_ratio.tolist()
+#         grid_ratio.insert(0, 0)
+#
+#         grid_ratio_set = []
+#         for s, e in zip(grid_ratio[:-1], grid_ratio[1:]):
+#             s = s+grid_gap if s else 0
+#             e = 100-(e-grid_gap) if s != 90 else 10
+#             grid_ratio_set.append((s,e))
+#         return grid_ratio_set
+#
+# class PlotPyechartsMarkPoint():
+#     """pyecharts的标记点"""
+#
+#     def __init__(self):
+#         self._mark_point_cache = []
+#
+#     def add(self, x, y, type_, value=None):
+#         """
+#
+#         :param x:
+#         :param y:
+#         :param type_: 1：BUY；2：SELL；3：OTHERS
+#         :param value: 标记点标签。仅在type_==3时有效。
+#         :return:
+#         """
+#         if not isinstance(x, str):
+#             x = str(x)
+#
+#         self._mark_point_cache.append({'x': x, 'y': y, 'type_': type_, 'value': value})
+#
+#     def get(self):
+#         data = map2(lambda d: self._creat_mark_point_item(d), self._mark_point_cache)
+#
+#         markpoint_opts = opts.MarkPointOpts(
+#             data=data,
+#             symbol_size=15,
+#             label_opts=opts.LabelOpts(position="bottom", color="#000000")
+#         )
+#         return markpoint_opts
+#
+#     def _creat_mark_point_item(self, d):
+#         x = d['x']
+#         y = d['y']
+#         type_ = d['type_']
+#         value = d['value']
+#
+#         if type_ == 1:
+#             return opts.MarkPointItem(coord=[x,y], value='B', symbol='triangle', itemstyle_opts=opts.ItemStyleOpts(color='#FF4500', opacity=0.6))
+#         elif type_ == 2:
+#             return opts.MarkPointItem(coord=[x,y], value='S', symbol='pin', itemstyle_opts=opts.ItemStyleOpts(color='#191970', opacity=0.6))
+#         else:
+#             return opts.MarkPointItem(coord=[x,y], value=value, symbol='diamond', itemstyle_opts=opts.ItemStyleOpts(color='#000000', opacity=0.6))
 
 # [绘图] matplotlib
 def drawPicture(xaxis=None, yaxis=None, bili=None, title=[], legends=[], figurename=None):
@@ -580,7 +974,7 @@ def drawPicture(xaxis=None, yaxis=None, bili=None, title=[], legends=[], figuren
     plt.show()
 
 
-# [网络工具] 设置代理为shadowsocks的本地代理
+# [network] 设置代理为shadowsocks的本地代理
 def set_proxy_shadowsocks():
     """
     使用方法：要求本地打开shadowsocks（PAC或者全局模式都行），然后直接调用本函数即可。
@@ -590,20 +984,21 @@ def set_proxy_shadowsocks():
     socks.set_default_proxy(socks.SOCKS5, addr="127.0.0.1", port=1080)
     socket.socket = socks.socksocket
 
-
-
 # [network] 获取本机公网IP
 def get_public_network_ip():
     """获取本机公网IP"""
     from bs4 import BeautifulSoup
-    from urllib.request import urlopen
+    try:
+        from urllib.request import urlopen
+    except:
+        from urllib import urlopen
     html = urlopen(r'http://ip.42.pl/raw')
     soup = BeautifulSoup(html.read(),'html5lib')
     public_network_ip = soup.text
     return public_network_ip
 
 # [network] 设置阿里云ESC安全组配置
-def set_aliyun_security_group():
+def set_aliyun_security_group(ip=None):
     """设置阿里云ESC安全组配置
 
     # 依赖包：https://developer.aliyun.com/sdk?spm=5176.12818093.resource-links.dsdk_platform.488716d0Ab954C
@@ -623,7 +1018,10 @@ def set_aliyun_security_group():
     import socket
     host_name = socket.gethostname()                # 获取本机名
 
-    public_network_ip = get_public_network_ip()     # 获取公网ip
+    if not ip:
+        public_network_ip = get_public_network_ip()     # 获取公网ip
+    else:
+        public_network_ip = ip
 
     # 设置安全组
     client = AcsClient('LTAIazo9xOTgCuJt', '6esQuEd39x3y5rMICbA3HHEgGXHAtw', 'cn-hongkong')
@@ -638,7 +1036,9 @@ def set_aliyun_security_group():
     request.set_Priority("1")
 
     response = client.do_action_with_exception(request)
-    print(str(response, encoding='utf-8'))
+
+    print('set aliyun security group: {}'.format(public_network_ip))
+
 
 # [network] 发送邮件
 import smtplib
@@ -664,7 +1064,7 @@ class MailClient():
         self.receiver = receiver
         self.mailcom = mailcom
 
-    def send(self, title, text, file_path=None):
+    def send(self, title: str, text: str = "", file_path: str = None):
         message = MIMEMultipart()
 
         message['subject'] = title      # 标题
@@ -672,7 +1072,7 @@ class MailClient():
         message['To'] = self.receiver   # 收件人 （仅作标识，无实际意义）
 
         # 添加文本
-        puretext = MIMEText(text)
+        puretext = MIMEText(text, "plain", "utf-8")
         message.attach(puretext)
 
         # 添加附件
@@ -684,7 +1084,10 @@ class MailClient():
 
         try:
             if self.mailcom == 'QQ':
-                smtpobj = smtplib.SMTP_SSL()
+                if sys.version_info.major == 2:
+                    smtpobj = smtplib.SMTP_SSL()
+                else:
+                    smtpobj = smtplib.SMTP_SSL('smtp.qq.com')
                 smtpobj.connect('smtp.qq.com', 465)  # 连接
             elif self.mailcom == '163':
                 smtpobj = smtplib.SMTP('SMTP.163.com', 25)  # ip和端口
@@ -692,9 +1095,68 @@ class MailClient():
             smtpobj.login(self.sender, self.password)  # 登录
             smtpobj.sendmail(self.sender, self.receiver, message.as_string())  # 开始发送
             smtpobj.quit()  # 退出
-            print("邮件发送成功！")
-        except:
-            print("失败")
+
+        except Exception as e:
+            print('-'*30)
+            print("邮件发送失败：")
+            print(e)
+            print('-'*30)
+
+
+class UtorEmailEngine():
+    """使用内部队列运行的EmailEngine"""
+
+    def __init__(self):
+        """"""
+        self.mail_client_map = {}
+        mail_client = MailClient(sender="bobyyt@qq.com", password="vmqbocyvryycbhhh", receiver='bobyyt@qq.com')      # 杨宇涛的邮箱
+        self.mail_client_map["bobyyt@qq.com"] = mail_client
+
+        self.thread: Thread = Thread(target=self.run)
+        self.queue: Queue = Queue()
+        self.active: bool = False
+
+    def send_email(self, subject: str, content: str = "", receiver: str = "", file_path: str = "") -> None:
+        if receiver and (receiver not in self.mail_client_map):
+            mail_client = MailClient(sender="bobyyt@qq.com", password="vmqbocyvryycbhhh", receiver=receiver)
+            self.mail_client_map[receiver] = mail_client
+
+        data = {
+            "subject": subject,
+            "content": content,
+            "file_path": file_path
+        }
+
+        self.queue.put(data)
+
+    def run(self) -> None:
+        """"""
+        while self.active:
+            try:
+                data = self.queue.get(block=True, timeout=1)
+
+                subject = data["subject"]
+                content = data["content"]
+                file_path = data["file_path"]
+
+                for mail_client in self.mail_client_map.values():
+                    mail_client.send(subject, content, file_path)
+
+            except Empty:
+                pass
+
+    def start(self) -> None:
+        """"""
+        self.active = True
+        self.thread.start()
+
+    def close(self) -> None:
+        """"""
+        if not self.active:
+            return
+
+        self.active = False
+        self.thread.join()
 
 
 # [system_time] 设置系统时间
@@ -737,6 +1199,15 @@ def get_internet_time():
     # r.getheaders()            # 获取所有的http头
     ts = r.getheader('date')    # 获取http头date部分
 
+    while not ts:
+        print(u'请求网络时间失败，正在重新请求...')
+
+        conn = client.HTTPConnection("www.baidu.com")
+        conn.request("GET", "/")
+        r = conn.getresponse()
+        # r.getheaders()            # 获取所有的http头
+        ts = r.getheader('date')    # 获取http头date部分
+
     # 将GMT时间转换成北京时间
     ltime = time.strptime(ts[5:25], "%d %b %Y %H:%M:%S")
     ttime = time.localtime(time.mktime(ltime) + 8 * 60 * 60)
@@ -751,8 +1222,8 @@ def getFuncDoc(txt):
     '''
     getFuncDoc(txt)
     """
-    # remark 只提取第二行的的def函数，要求函数前面有"   "，否则不予提取
-    # remark 使用时一定要加上r'''xxxx'''转义符
+    # [REMARK] 只提取第二行的的def函数，要求函数前面有"   "，否则不予提取
+    # [REMARK] 使用时一定要加上r'''xxxx'''转义符
 
     # 删除行分割线
     txt2 = txt.replace('    #----------------------------------------------------------------------\n','')
@@ -795,12 +1266,27 @@ def getFuncDoc(txt):
 """三、优化类"""
 # [并行优化] 多线程池
 class WrapThread(Thread):
-    # 传入semaphore
+    def __init__(self, *args, **kwargs):
+        super(WrapThread, self).__init__(group=None, *args, **kwargs, )
+        self.result = None
+
     def setSemaphore(self, sem):
+        """传入semaphore"""
         self.sem = sem
 
+    def get_result(self):
+        """获取线程结果"""
+        return self.result
+
     def run(self):
-        super(WrapThread, self).run()
+        try:
+            if self._target:
+                self.result = self._target(*self._args, **self._kwargs)
+        finally:
+            # Avoid a refcycle if the thread is running a function with
+            # an argument that has a member that points to the thread.
+            del self._target, self._args, self._kwargs
+
         if self.__dict__.get('sem'):
             self.sem.release()      # 释放锁，semaphore数+1
 
@@ -810,6 +1296,14 @@ class ThreadPool():
 
         :param thread_num: 线程数量。注意如果thread_num=1，那么为单线程
         :return:
+
+        Feature:
+        [ADD] semaphore：用于锁定同时运行的线程数量。
+        - 在ThreadPool传入self.sem给WrapThread。每增加一个线程运行，self.sem的锁-1；每一个线程运行完毕，释放一个锁，锁+1。
+        - 当self.sem的锁用完，则剩余的线程不会继续运行，需要等待旧线程完成释放新的锁才能开始运行。
+
+        [ADD] 获取线程结果
+        WrapThread.get_result()
         """
         self.threadpool = []
         self.workerThread = None
@@ -830,14 +1324,17 @@ class ThreadPool():
 
     def run(self, isJoin=True, sleep=None):
         # 新建独立线程启动线程池，防止semaphore阻塞
-        self.workerThread = Thread(target=self.worker, args=(isJoin, sleep))
+        self.workerThread = Thread(target=self._worker, args=(isJoin, sleep))
         self.workerThread.setDaemon(True)
         self.workerThread.start()
 
         if isJoin:
             self.workerThread.join()
 
-    def worker(self, isJoin=True, sleep=None):
+        results = [th.get_result() for th in self.threadpool]
+        return results
+
+    def _worker(self, isJoin=True, sleep=None):
         for th in self.threadpool:
             self.sem.acquire()  # 获得锁，semaphore数-1
             th.setDaemon(True)
@@ -858,7 +1355,8 @@ class ProcessPool():
     * 如果是windows系统， multiprocessing.Process需在if __name__ ==  '__main__':下使用，否则会出现RuntimeError: freeze_support()
     * 在python2版本里，类的方法是不能作为target函数的
 
-    eg.
+
+    eg1.
     def testfunc(*args):
         print(args)
 
@@ -866,33 +1364,74 @@ class ProcessPool():
     for i in range(1000000):
         tp.add(testfunc, ('a', i))
     tp.run()
+
+
+    eg2.
+    def div(a, b):
+        return a/b
+
+    def callback_func(return_value):
+        print(return_value)
+
+    def error_callback_func(raise_error):
+        print(raise_error)
+
+    if __name__ == '__main__':
+        p = ProcessPool(1)
+        for a,b in [(2,3), (5,4), (3,0)]:
+            p.add(div, (a, b,), callback=callback_func, error_callback=error_callback_func)
+        p.run()
+        p.get_result_list()
     """
     def __init__(self, process_num=None):
         self.task_list = []
         self.pool_list = []
         self.count = process_num if process_num else multiprocessing.cpu_count()
 
-    def add(self, target, args):
-        self.task_list.append([target, args])
+    def add(self, target, args, callback=None, error_callback=None):
+        """
+
+        :param target:
+        :param args:
+        :param callback: Function。子进程执行正常时的回调函数，该函数的参数为子进程的返回值(return value)。
+        :param error_callback: Function。子进程执行出错时的回调函数，该函数的参数为子进程的错误类型(raise error)。
+        [NOTICE] error_callback只对python3有效，对Python2无效。
+        :return:
+        """
+        self.task_list.append([target, args, callback, error_callback])
 
     def run(self, isJoin=True):
-        print('multiProcessPool Count: {}'.format(self.count))    # 开启的进程数
+        print('multiProcessPool Count: {}'.format(self.count))
 
         pool = multiprocessing.Pool(self.count)
-        for target, args in self.task_list:
-            self.pool_list.append(pool.apply_async(target, args))
+
+        for target, args, callback, error_callback in self.task_list:
+            if not callback:
+                callback = self._default_callback
+            if not error_callback:
+                error_callback = self._default_error_callback
+
+            if sys.version_info.major == 2:
+                self.pool_list.append(pool.apply_async(target, args, callback=callback))
+            else:
+                self.pool_list.append(pool.apply_async(target, args, callback=callback, error_callback=error_callback))
         pool.close()
 
         if isJoin:
             pool.join()
 
-    def get_rusult_list(self):
-        resultList = [res.get() for res in self.pool_list if res._success]   # new 修复多进程优化结果里没有成交时返回数据的问题
-        resultList.sort(reverse=True, key=lambda result:result[1])
-        return resultList
+    def get_result_list(self):
+        return [res.get() for res in self.pool_list if res._success]
+
+    def _default_error_callback(self, error):
+        traceback.print_exc()
+
+    def _default_callback(self, result):
+        if result:
+            print(result.get())
 
 
-# [耗时分析] 耗时分析（代码段）  # remark 不推荐使用这个作为代码段耗时分析，推荐直接使用print(time.clock())
+# [耗时分析] 耗时分析（代码段）  # [REMARK] 不推荐使用这个作为代码段耗时分析，推荐直接使用print(time.clock())
 class usetime(object):
     """
     分析耗时模块。
@@ -954,11 +1493,12 @@ def useprofile(use=True, showone=True):
 
 
 # [缓存器] 缓存函数结果
-# globals()['globals_cache_dict'] = OrderedDict()     # 全局缓存字典
+if sys.version_info.major == 2:
+    globals()['globals_cache_dict'] = OrderedDict()     # 全局缓存字典
 def cache(key=None, keyeval=None, maxsize=10):
     """函数结果缓存器
 
-    !notice：每个函数使用各自缓存器，缓存名的key是str((args,kwargs)) → ∴对于同一个函数来说，str((args,kwargs))相同则读取相同的值
+    [NOTICE] 每个函数使用各自缓存器，缓存名的key是str((args,kwargs)) → ∴对于同一个函数来说，str((args,kwargs))相同则读取相同的值
 
     :param key: 缓存名（固定）
     :param keyeval: 缓存名（使用eval语法）
@@ -1051,136 +1591,153 @@ def cache(key=None, keyeval=None, maxsize=10):
 
 
 # [异常处理] 出现异常自动重新运行
-def retry(fix_exception=(), fix_func=None, fix_args={}, fix_args_eval=None,
-          retry_exception=(Exception), retry_times=-1, retry_delay=0):
-    """
-    当被main_func出现retry_exception异常重新执行该函数，fix_exception异常运行指定function
+def retry(
+        fix_exception: Union[Exception, Sequence[Exception]] = (),
+        fix_func: Callable = None,
+        fix_args: dict = None,
+        fix_args_eval: str = "",
+        pass_origin_args = False,
+        retry_exception: Union[Exception, Sequence[Exception]] = (),
+        max_times: int = -1,
+        delay: int = 0
+):
+    """用法
+    1.fix_exception指定"需要修复的exception"，retry_exception指定"需要重试的exception"
+    2.可以同时使用多个@retry，执行顺序由下至上
 
-    :param fix_exception: Exception类型。使用fix_func处理后再重新执行Exception。
-    :param fix_func: Function类型。出现fix_exception时，使用fix_func处理后再重新执行
-    :param fix_args: dict类型。fix_func的参数
-    :param fix_args_eval: str类型。当fix_func的参数需要在main_func内获取的话，传入fix_args_eval="{'普通参数args': args[0], '关键词参数kwargs': kwargs['y']}"
+    :param fix_exception: 需要使用修复的exception列表。
+    :param fix_func: 修复exception的方法。
+    :param fix_args: fix_func的外部指定参数。
+    :param fix_args_eval: fix_func的内部指定参数。当fix_func的参数需要在main_func内获取的话，传入fix_args_eval="{'普通参数args': args[0], '关键词参数kwargs': kwargs['y']}"
+    :param pass_origin_args: 是否要传送原函数的参数。
+    NOTICE: pass_origin_args=Ture，则fix_func必须有参数origin。
+    NOTICE: origin = (main_func, args, kwargs)
 
-    :param retry_exception: Exception类型。直接重新执行的Exception。
-                            ！注意：retry_exception=(Exception)时表示全部异常都重新执行。
-
-    :param retry_times: int类型。最大重试次数。默认max_tries=-1（无限次）
-    :param retry_delay: int类型。每次重试之间的延迟秒数。delay=0秒。
+    :param retry_exception: 需要重新执行的Exception。 ！NOTICE：retry_exception=(Exception,)时表示全部异常都重新执行。
+    :param max_times: 最大重试次数。默认max_times=-1（无限次）
+    :param delay: 每次重试之间的延迟秒数。delay=0秒。
 
     :return:
 
-    # 案例1：不对参数进行处理，仅仅执行报告的
-    def fix_ZeroDivisionError_1(x, y):
-        print('origin', x, y)
+    【案例】
+    def fix_ZeroDivisionError(author, origin=None):
+        print(f'原参数: author={author}, origin={origin}')
 
-    # 执行函数
-    @retry(fix_exception=ZeroDivisionError, fix_func=fix_ZeroDivisionError_1, fix_args_eval="{'x': args[0], 'y': kwargs['y']}",
-           retry_times=5, retry_delay=3)
-    def div(x, y):
-        print(x / y)
-
-    div(1, y=0)
-
-    # -------------------------
-    # 案例2：fix_func处理异常参数（有return）
-    def fix_ZeroDivisionError_2(x, y):
-        '''异常处理函数
-
-        作用1：传入错误参数，修正后返回正确参数
-        作用2：不返回函数，直接处理
-        :param x:
-        :param y:
-        :return: args, kwargs 或 不返回
-        '''
-        # 处理结果
-        print('origin', x, y)
+        func, args kwargs = origin
+        x = args[0]
+        y = kwargs['y']
+        z = kwargs['z']
 
         if y == 0:
             y += 1
+        print(f'新参数: x={x}, y={y}, z={z}')
 
-        print('fix', x, y)
+        # 重新执行函数
+        main_func = origin[0]
+        main_func(x, y, z)
+        return main_func
 
-        # 返回正确参数
-        args = ()
-        kwargs = {'x': x, 'y': y}
-        return args, kwargs
 
-    # 执行函数
-    @retry(fix_exception=(ZeroDivisionError), fix_func=fix_ZeroDivisionError_2, fix_args_eval="{'x': args[0], 'y': kwargs['y']}")
-    def div(x, y):
-        print(x / y)
+    def fix_TypeError(author, origin=None):
+        print(f'原参数: author={author}, origin={origin}')
 
-    div(1, y=0)
+        func, args kwargs = origin
+        x = args[0]
+        y = kwargs['y']
+        z = kwargs['z']
+
+        if not isinstance(z, (int, float)):
+            z = float(z)
+        print(f'新参数: x={x}, y={y}, z={z}')
+
+        # 重新执行函数
+        main_func = origin[0]
+        main_func(x, y, z)
+        return main_func
+
+
+    # 同时使用多个@retry，执行顺序由下至上。按TypeError - ZeroDivisionError - Exception的顺序判断和处理。
+    @retry(retry_exception=Exception, max_times=3, delay=2)
+    @retry(fix_exception=ZeroDivisionError, fix_func=fix_ZeroDivisionError, fix_args={"author": "Utor"}, pass_origin_args=True)
+    @retry(fix_exception=TypeError, fix_func=fix_TypeError, fix_args={"author": "Yeung"}, pass_origin_args=True)
+    def div(x, y, z, **kwargs):
+        if kwargs:
+            k = kwargs['k']
+            t = kwargs['t']
+        number = x / y - z
+        print(f"div(): {number}")
+        return number
+
+    div(1, y=1, z=5)        # 正常执行
+    time.sleep(2)
+
+    div(1, y=0, z=5)        # y为0，出现ZeroDivisionError，用fix_ZeroDivisionError函数处理
+    time.sleep(2)
+
+    div(1, y=1, z="5")      # z为str，出现TypeError，用fix_TypeError函数处理
+    time.sleep(2)
+
+    div(1, y=1, z=5, k=3)   # 缺失参数t，出现KeyError，重试3次后raise error
+    time.sleep(2)
     """
 
-    # todo 转换为可按传入Exception顺序调用的模式
-    # (({'exception': MemoryError, 'function': emailEngine.sendMail, 'args':(3, 5), 'kwargs': None, 'eval': None},
-    #   {'exception': Exception, 'function': retry, 'args':(-1, ), 'kwargs': {'delay': 0},  'eval': None}))
+    if not fix_args:
+        fix_args = {}
 
     def wrapper(main_func):
         @wraps(main_func)
         def new_fun(*args, **kwargs):
-            max_tries = retry_times     # remark while循环必须在闭包里本地引用
+            max_tries = max_times     # [REMARK] while循环必须在闭包里本地引用
             while max_tries:
                 # 1.正常执行就跳出循环，完成本次调用
                 try:
                     return main_func(*args, **kwargs)
 
-                # 2.1.出现fix_exception就先执行fix_func，然后继续循环，重新执行main_func
                 except fix_exception as e:
-                    # print出错误类型
-                    print('-'*30)
-                    print(e)
-                    print(type(e))
-                    print('-'*30)
-
-                    # 使用eval(fix_args_eval)传入main_func的参数，然后执行fix_func
+                    if pass_origin_args:
+                        fix_args['origin'] = (main_func, args, kwargs)
                     if fix_args_eval:
                         fix_args.update(eval(fix_args_eval))
-                    fix_func_return = fix_func(**fix_args)
 
-                    # 如果fix_func有返回值（args, kwargs)，则使用处理后的参数替换原有参数
-                    if fix_func_return:
-                        args, kwargs = fix_func_return
-
-                    # 最大重试次数限制
-                    max_tries -= 1
+                    max_tries -= 1      # 最大重试次数限制
                     if not max_tries:
                         raise
-                    # 延迟delay秒
-                    time.sleep(retry_delay)
+                    time.sleep(delay)   # 延迟delay秒
 
-                    # 用continue则重新执行main_func；用break则跳出循环
-                    continue    # continue 或 break
+                    return fix_func(**fix_args)
 
-                # 2.2.出现retry_exception继续循环，重新执行main_func
                 except retry_exception as e:
-                    # print出错误类型
-                    print('-'*30)
-                    print(e)
-                    print(type(e))
-                    print('-'*30)
-
-                    # 最大重试次数限制
                     max_tries -= 1
                     if not max_tries:
                         raise
-                    # 延迟delay秒
-                    time.sleep(retry_delay)
+                    time.sleep(delay)
 
                     continue
+
         return new_fun
 
     return wrapper
 
+# [异常处理] 在调用此函数的函数里，打印调用路径
+def print_traceback():
+    for i in traceback.extract_stack():
+        print(i)
 
 
 """四、交易相关类"""
 # [KPI] 回测报告
 class KPI(object):
-    # notice：
+    # [NOTICE]：
     # equity、datetime传入全部要用np.array/list, 最好用pd.Series
     # 复利算法指"年复利"，按"每年进行一次复利"为标准复利基准。
+
+    # todo 1.算法以vnpy2版本为准
+    # todo 2.改为__init__时统一传入datetime, equity，直接在__init__里判断类型（统一为pd.Series）
+    # todo 3.不需要每个指标计算都return，直接设为self.XXX就好。其他函数调用时不需要重新算
+    # 例如
+    # def calculate_return_percent(self):
+    #     if not self.return_percent:
+    #         self.return_percent = xxxxx
 
     # 回报率
     def returnPercent(self, equity):
@@ -1259,7 +1816,7 @@ class KPI(object):
     # interest: 年化无风险利率
     # n: 小周期转年化的可交易周期数。日转年：252或365；周转年：52；月转年：12。
     def sharpeRatio_simpleYear(self, equity, datetime, interest=0, n=252):
-        barreturn = equity/equity.shift(1) - 1
+        barreturn = equity / shift(equity) - 1
         return (self.returnPercent_simpleYear(equity, datetime)-interest) / (np.std(barreturn,ddof=1) * math.sqrt(n))
 
     def sharpeRatio_compoundYear(self, equity, datetime, interest=0, n=252):
@@ -1290,7 +1847,7 @@ class KPI(object):
 
     # -------------------------
     # 综合报告
-    def backtestReport(self, equity, datetime, interest=0, annualDays=252):
+    def backtestReport(self, equity, datetime, interest=0, annualDays=252, show=True):
         # 收益指标
         return_percent = self.returnPercent(equity)
         yearreturn_simple = self.returnPercent_simpleYear(equity, datetime)
@@ -1314,22 +1871,23 @@ class KPI(object):
         sortino_compound = self.sortinoRatio_compoundYear(equity, datetime, interest=interest, n=annualDays)
 
         #输出报告
-        print('数据时段:%s - %s' %(datetime.values[0],datetime.values[-1]))
-        print('总收益率:%.2f%%' %(return_percent*100))
-        print('年收益率(单利):%.2f%%' %(yearreturn_simple*100))
-        print('年收益率(复利):%.2f%%' %(yearreturn_compound*100))
-        print('最大回撤率:%.2f%%' %(max_drawdown_percent*100))
-        print(u'最大回撤率发生时间:%s' %(max_drawdown_percent_time))
-        print(u'最长回撤期:%s' %(max_drawdown_bar))
-        print(u'最长回撤期发生时间:%s' %(max_drawdown_bar_time))
-        print('')
-        print('CalmarRatio(单利):%.2f' %(calmar_simple))
-        print('CalmarRatio(复利):%.2f' %(calmar_compound))
-        print('SharpeRatio(单利):%.2f' %(sharpe_simple))
-        print('SharpeRatio(复利):%.2f' %(sharpe_compound))
-        print('SortinoRatio(单利):%.2f' %(sortino_simple))
-        print('SortinoRatio(复利):%.2f' %(sortino_compound))
-        print('')
+        if show:
+            print('数据时段:%s - %s' %(datetime.values[0],datetime.values[-1]))
+            print('总收益率:%.2f%%' %(return_percent*100))
+            print('年收益率(单利):%.2f%%' %(yearreturn_simple*100))
+            print('年收益率(复利):%.2f%%' %(yearreturn_compound*100))
+            print('最大回撤率:%.2f%%' %(max_drawdown_percent*100))
+            print(u'最大回撤率发生时间:%s' %(max_drawdown_percent_time))
+            print(u'最长回撤期:%s' %(max_drawdown_bar))
+            print(u'最长回撤期发生时间:%s' %(max_drawdown_bar_time))
+            print('')
+            print('CalmarRatio(单利):%.2f' %(calmar_simple))
+            print('CalmarRatio(复利):%.2f' %(calmar_compound))
+            print('SharpeRatio(单利):%.2f' %(sharpe_simple))
+            print('SharpeRatio(复利):%.2f' %(sharpe_compound))
+            print('SortinoRatio(单利):%.2f' %(sortino_simple))
+            print('SortinoRatio(复利):%.2f' %(sortino_compound))
+            print('')
 
         kpi = {
             'return_percent': return_percent,
@@ -1489,18 +2047,18 @@ class cointegration():
             self.activeLeg_marketValue = activeLeg_marketValue.applymap(math.log)
             self.passiveLeg_marketValue = passiveLeg_marketValue.applymap(math.log)
 
-    def conit(self, corr_filter=None, integrated_filter=False):
+    def conit(self, correlation_filter: float = None, integrated_filter=False):
         """
 
-        :param corr_filter: 相关性过滤参数。默认None，表示不使用相关性过滤。
+        :param correlation_filter: 相关性过滤参数。默认None，表示不使用相关性过滤。
         :param integrated_filter: 是否使用同阶单整判断。
         :return: isCoint, coint_pvalue
         """
         # 相关性过滤
-        if corr_filter:
-            corr_degrees, corr_pvalue = pearsonr(self.activeLeg_marketValue, self.passiveLeg_marketValue)
-            print(u'皮尔森相关度:{}, 相关性P值: {}'.format(corr_degrees, corr_pvalue))
-            if corr_pvalue < 0.05 and corr_degrees < corr_filter:
+        if correlation_filter:
+            correlation_degrees, correlation_pvalue = pearsonr(self.activeLeg_marketValue, self.passiveLeg_marketValue)
+            print(u'皮尔森相关度:{}, 相关性P值: {}'.format(correlation_degrees, correlation_pvalue))
+            if correlation_pvalue < 0.05 and correlation_degrees < correlation_filter:
                 return False, np.nan
 
         # 判断是否非平稳且同阶单整
@@ -1529,8 +2087,26 @@ class cointegration():
 
     # 回归分析OLS
     def ols(self):
-        constant, ols = (sm.OLS(self.passiveLeg_marketValue, sm.add_constant(self.activeLeg_marketValue))).fit().params
+        """计算ols值
+
+        注意：ols值是passiveLeg_marketValue的回归系数。
+        （以套利为例，则公式为：spread = activeLeg - ols * passiveLeg - constant）
+        """
+        constant, ols = (sm.OLS(self.activeLeg_marketValue, sm.add_constant(self.passiveLeg_marketValue))).fit().params
         return ols, constant
+
+    # 画图
+    def plot(self):
+        ols, constant = self.ols()
+
+        spread = self.activeLeg_marketValue - ols * self.passiveLeg_marketValue - constant
+        pic = PlotPyecharts3('test_picture')
+        data = spread
+        x_data = list(range(len(data)))
+        pic.plot(1, x_data, data, legend='spread')
+        pic.plot(2, x_data, self.activeLeg_marketValue, legend='activeLeg_marketValue')
+        pic.plot(3, x_data, self.passiveLeg_marketValue, legend='passiveLeg_marketValue')
+        pic.render()
 
 
 # [okex] okex交割合约代码计算（当周、次周、当季）
@@ -1575,8 +2151,33 @@ def checkDelivery_OKEX(run_datetime):
     print(u'OKEXF: %s, 当周%s, 次周%s, 当季%s' %(dt.datetime.strftime(run_datetime, '%Y%m%d %H:%M:%S'), thisweek, nextweek, quarter))
     return thisweek, nextweek, quarter
 
+# [stock] 判断当前价是否涨停板
+class StockLimitPrice():
+    """判断当前价是否涨停板（使用decimal模块）"""
 
-# [vnpy2] 使用优化参数的csv文件设置cta_setting.json
+    def __init__(self):
+        self.up_limit = None
+        self.down_limit = None
+
+    def update_limit_price(self, pre_close_price, is_st):
+        if not is_st:
+            self.up_limit = decimal_round(pre_close_price * 1.1, 2)
+            self.down_limit = decimal_round(pre_close_price * 0.9, 2)
+        else:
+            self.up_limit = decimal_round(pre_close_price * 1.05, 2)
+            self.down_limit = decimal_round(pre_close_price * 0.95, 2)
+
+    def discriminate_limit_price(self, price):
+        if not self.up_limit:
+            return False
+
+        price_ = Decimal(str(price))
+        if price_ in [self.up_limit, self.down_limit]:
+            return True
+        else:
+            return False
+
+# [vnpy2] optimize_csv -> cta_setting.json
 def set_cta_setting_json_from_optimize_csv_vnpy2(optimize_csv_path, strategy_name):
     """使用优化参数的csv文件设置cta_setting.json
 
@@ -1590,11 +2191,11 @@ def set_cta_setting_json_from_optimize_csv_vnpy2(optimize_csv_path, strategy_nam
     strategy_dict = {}
 
     l = getDirFile(optimize_csv_path)
-    path_list = [i[2] for i in l]
+    path_list = [i[2] for i in l if 'result' in i[2]]
     for path in path_list:
         df = pd.read_csv(path)
         gb = df.groupby('symbol').first()
-        print(df)
+        # print(df)
 
         for i,d in gb.iterrows():
             instance_name = '{}_{}'.format(strategy_name, i)
@@ -1616,27 +2217,29 @@ def set_cta_setting_json_from_optimize_csv_vnpy2(optimize_csv_path, strategy_nam
         j = json.dumps(strategy_dict, indent=4)
         f.write(j)
 
-# [vnpy2] 使用优化参数的csv文件设置backtesting_dict
-def set_backtesting_dict_from_optimize_csv_vnpy2(optimize_csv_path, strategy_name):
+# [vnpy2] optimize_csv -> backtesting_dict
+def set_backtesting_dict_from_optimize_csv_vnpy2(optimize_csv_path, strategy_class_name):
     """使用优化参数的csv文件设置backtesting_dict
 
     :param optimize_csv_path: 优化参数的csv文件夹路径
-    :param strategy_name: 策略名
+    :param strategy_class_name: 策略名
     :return:
 
     eg.
-    set_backtesting_dict_from_optimize_csv_vnpy2(optimize_csv_path=r'G:\test', strategy_name='QianKunStockStrategy')
+    set_backtesting_dict_from_optimize_csv_vnpy2(optimize_csv_path=r'G:\test', strategy_class_name='QianKunStockStrategy')
     """
+    class_name = strategy_class_name
     strategy_dict = {}
 
     l = getDirFile(optimize_csv_path)
-    path_list = [i[2] for i in l]
+    path_list = [i[2] for i in l if 'result' in i[2]]
     for path in path_list:
         df = pd.read_csv(path)
         gb = df.groupby('symbol').first()
 
         for i,d in gb.iterrows():
             vt_symbol = i
+            strategy_name = '{}_{}'.format(strategy_class_name, vt_symbol)
 
             param_list = list(d.keys())
             param_list.remove('target')
@@ -1645,10 +2248,59 @@ def set_backtesting_dict_from_optimize_csv_vnpy2(optimize_csv_path, strategy_nam
             setting={}
             for param_name in param_list:
                 setting[param_name] = d[param_name]
-            strategy_dict[vt_symbol] = setting
-    print(strategy_dict)
+            setting['class_name'] = class_name
 
-# [vnpy] bar类模仿tick类 # remark 单个数据类
+            dict_ = {}
+            dict_['class_name'] = class_name
+            dict_['vt_symbol'] = vt_symbol
+            dict_['setting'] = setting
+
+            strategy_dict[strategy_name] = dict_
+
+    with open('cta.json', 'w+') as f:
+        j = json.dumps(strategy_dict, indent=4)
+        f.write(j)
+
+# [vnpy2] optimize_mongo -> cta_setting.json
+def set_cta_json_from_optimize_mongo_vnpy2(strategy_class):
+    """获取MongoDB的优化参数列表，并输出为cta_setting.json"""
+    from vnpy.trader.constant import ComputerIP
+    from vnpy.trader.database import database_manager
+    from vnpy.trader.database.database import DbName
+    from vnpy.trader.database.mongodb import VnMongo
+
+    vm = database_manager
+
+    contract_cursor = vm.db_query(DbName.OTHERS_DB_NAME.value, 'ashare_contract', {})
+    vt_symbol_list = ['.'.join([contract['symbol'], contract['exchange']]) for contract in contract_cursor]
+    vt_symbol_list.sort()
+    # vt_symbol_list = vt_symbol_list[vt_symbol_list.index('600182.ASHARE'):]
+
+    dict_ = {}
+    for vt_symbol in vt_symbol_list:
+        strategy_dict = {}
+        strategy_dict["class_name"] = strategy_class.__name__
+        strategy_dict["vt_symbol"] = vt_symbol
+        strategy_dict["setting"] = {}
+
+        setting = strategy_dict["setting"]
+        setting["class_name"] = strategy_class.__name__
+
+        flt = {'strategy': strategy_class.__name__, 'vt_symbol': vt_symbol}
+        strategy_setting_cursor = vm.db_query(DbName.QDBACKTEST_STOCK_NAME.value, 'optimization', flt)
+        if strategy_setting_cursor:
+            param_dict = strategy_setting_cursor[0]['param']
+            for param, value in param_dict.items():
+                setting[param] = value
+
+        instance_name = f"{strategy_class.__name__}_{vt_symbol}"
+        dict_[instance_name] = strategy_dict
+
+    with open(f'{strategy_class.__name__}.json', 'w+') as f:
+        j = json.dumps(dict_, indent=4)
+        f.write(j)
+
+# [vnpy] bar类模仿tick类 # [REMARK] 单个数据类
 def simulate_1minBar_tick(bar):
     """把VtBarData()模拟为VtTickData()
 
@@ -1661,7 +2313,7 @@ def simulate_1minBar_tick(bar):
     tick.datetime = bar.datetime - dt.timedelta(seconds=60)    # tick.datetime是按达到时间算，bar.datetime是按bar的开始时间算，∴要减去1分钟的时间
     return tick
 
-# [vnpy] bar类模仿tick类 # remark pd.DataFrame版
+# [vnpy] bar类模仿tick类 # [REMARK] pd.DataFrame版
 def simulate_1minBarData_tickData(bardata):
     """把VtBarData的DataFrame 模拟为 VtTickData()的DataFrame
 
@@ -1693,6 +2345,30 @@ def simulate_1minBarData_tickData(bardata):
     tickdata['datetime'] = bardata['datetime'] + dt.timedelta(seconds=60)  # tick.datetime是按达到时间算，bar.datetime是按bar的开始时间算，∴要在bar.datetime+1分钟的时间
 
     return tickdata
+
+# [vnpy2] bar类模仿tick类 # [REMARK] 单个数据类
+from vnpy.trader.object import TickData
+def simulate_1minBar_tick_vnpy2(bar):
+    """把VtBarData()模拟为VtTickData()
+
+    :param bar:
+    :return:
+    """
+    tick = TickData(
+        gateway_name=bar.gateway_name,
+
+        symbol=bar.symbol,
+        exchange=bar.exchange,
+        datetime=bar.datetime + dt.timedelta(seconds=60),   # [REMARK] tick.datetime是按达到时间算，bar.datetime是按bar的开始时间算，∴要减去1分钟的时间
+
+        volume=bar.volume,
+        open_interest=bar.open_interest,
+
+        last_price=bar.close_price,
+        bid_price_1=bar.close_price,
+        ask_price_1=bar.close_price,
+    )
+    return tick
 
 # [vnpy] 判断主力合约 (from:汪振宇)
 class Active(object):

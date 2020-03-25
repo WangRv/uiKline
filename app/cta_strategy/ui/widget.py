@@ -8,6 +8,10 @@ from vnpy.trader.ui.widget import (
     TimeCell,
     BaseMonitor
 )
+from vnpy.trader.utility import extract_vt_symbol, BarGenerator
+from vnpy.trader.event import *
+from vnpy.trader.constant import *
+from vnpy.trader.database import database_manager
 from ..base import (
     APP_NAME,
     EVENT_CTA_LOG,
@@ -15,6 +19,42 @@ from ..base import (
     EVENT_CTA_STRATEGY
 )
 from ..engine import CtaEngine
+from uiKline.chart.item import *
+from uiKline.chart.everDataAxisWidget import *
+
+
+class SendOrderText(Enum):
+    SYMBOL = "合约代码"
+    PRICE = "价格"
+    VOLUME = "成交量"
+    OFFSET = "开平"
+    PRICE_TYPE = "价格类型"
+    DIRECTION = "开仓方向"
+
+
+class TickText(Enum):
+    BID_PRICE_1 = u'买一价'
+    BID_PRICE_2 = u'买二价'
+    BID_PRICE_3 = u'买三价'
+    BID_PRICE_4 = u'买四价'
+    BID_PRICE_5 = u'买五价'
+    ASK_PRICE_1 = u'卖一价'
+    ASK_PRICE_2 = u'卖二价'
+    ASK_PRICE_3 = u'卖三价'
+    ASK_PRICE_4 = u'卖四价'
+    ASK_PRICE_5 = u'卖五价'
+
+    BID_VOLUME_1 = u'买一量'
+    BID_VOLUME_2 = u'买二量'
+    BID_VOLUME_3 = u'买三量'
+    BID_VOLUME_4 = u'买四量'
+    BID_VOLUME_5 = u'买五量'
+    ASK_VOLUME_1 = u'卖一量'
+    ASK_VOLUME_2 = u'卖二量'
+    ASK_VOLUME_3 = u'卖三量'
+    ASK_VOLUME_4 = u'卖四量'
+    ASK_VOLUME_5 = u'卖五量'
+    LAST = u'最新价'
 
 
 class CtaManager(QtWidgets.QWidget):
@@ -158,13 +198,310 @@ class CtaManager(QtWidgets.QWidget):
         self.showMaximized()
 
 
+class SendOrderWidgets(QtWidgets.QWidget):
+    signal = QtCore.pyqtSignal(type(Event))
+
+    direction_text_class = Direction
+    offset_text_class = Offset
+    price_type_text_class = OrderType
+    tick_text_class = TickText
+
+    def __init__(self, ctaEngine, strategy_name, parent=None):
+        super(SendOrderWidgets, self).__init__()
+        self.ctaEngine = ctaEngine
+        self.eventEngine = self.ctaEngine.event_engine
+
+        self.strategy_name = strategy_name
+        self.symbol = ""
+
+        self.init()
+
+    def init(self):
+        # 设置标题
+        self.setWindowTitle("%s" % self.strategy_name)
+
+        # 固定窗口大小
+        self.setFixedWidth(400)
+        # self.setFixedHeight(300)
+
+        # 左边标签
+        labelSymbol = QtWidgets.QLabel()  # 合约代码
+        labelDirection = QtWidgets.QLabel(SendOrderText.DIRECTION.value)  # 开仓方向
+        labelOffset = QtWidgets.QLabel(SendOrderText.OFFSET.value)  # 开平
+        labelPrice = QtWidgets.QLabel(SendOrderText.PRICE.value)  # 价格
+        self.checkFixed = QtWidgets.QCheckBox(u'')  # 价格固定选择框
+        labelVolume = QtWidgets.QLabel(SendOrderText.VOLUME.value)  # 成交量
+        labelPriceType = QtWidgets.QLabel(SendOrderText.PRICE_TYPE.value)  # 市价或限价格价
+
+        # 选择框和编辑框
+        self.lineSymbol = QtWidgets.QLineEdit()
+        self.lineSymbol.setReadOnly(True)
+        self.comboDirection = QtWidgets.QComboBox()
+        self.comboDirection.addItems([direction.value for direction in self.direction_text_class])
+
+        self.comboOffset = QtWidgets.QComboBox()
+        self.comboOffset.addItems([offset.value for offset in self.offset_text_class])
+
+        validator = QtGui.QDoubleValidator()  # 浮点编辑器
+        validator.setBottom(0)  # 显然价格 成交量没有负数
+
+        self.linePrice = QtWidgets.QLineEdit()
+        self.linePrice.setValidator(validator)
+
+        self.lineVolume = QtWidgets.QLineEdit()
+        self.lineVolume.setValidator(validator)
+
+        self.comboPriceType = QtWidgets.QComboBox()
+        self.comboPriceType.addItems([price_type.value for price_type in self.price_type_text_class])
+
+        grid_left = QtWidgets.QGridLayout()
+        grid_left.addWidget(labelSymbol, 0, 0)
+        grid_left.addWidget(labelDirection, 1, 0)
+        grid_left.addWidget(labelOffset, 2, 0)
+        grid_left.addWidget(labelPrice, 3, 0)
+        grid_left.addWidget(labelVolume, 4, 0)
+        grid_left.addWidget(labelPriceType, 5, 0)
+
+        grid_left.addWidget(self.lineSymbol, 0, 1, 1, -1)
+        grid_left.addWidget(self.comboDirection, 1, 1, 1, -1)
+        grid_left.addWidget(self.comboOffset, 2, 1, 1, -1)
+        grid_left.addWidget(self.checkFixed, 3, 1)
+        grid_left.addWidget(self.linePrice, 3, 2, 1, -1)
+        grid_left.addWidget(self.lineVolume, 4, 2, 1, -1)
+        grid_left.addWidget(self.comboPriceType, 5, 1, 1, -1)
+
+        # 右边行情
+        labelBid1 = QtWidgets.QLabel(self.tick_text_class.BID_PRICE_1.value)
+        labelBid2 = QtWidgets.QLabel(self.tick_text_class.BID_PRICE_2.value)
+        labelBid3 = QtWidgets.QLabel(self.tick_text_class.BID_PRICE_3.value)
+
+        labelAsk1 = QtWidgets.QLabel(self.tick_text_class.ASK_PRICE_1.value)
+        labelAsk2 = QtWidgets.QLabel(self.tick_text_class.ASK_PRICE_2.value)
+        labelAsk3 = QtWidgets.QLabel(self.tick_text_class.ASK_PRICE_3.value)
+
+        self.labelBidPrice1 = QtWidgets.QLabel()
+        self.labelBidPrice2 = QtWidgets.QLabel()
+        self.labelBidPrice3 = QtWidgets.QLabel()
+        self.labelBidVolume1 = QtWidgets.QLabel()
+        self.labelBidVolume2 = QtWidgets.QLabel()
+        self.labelBidVolume3 = QtWidgets.QLabel()
+
+        self.labelAskPrice1 = QtWidgets.QLabel()
+        self.labelAskPrice2 = QtWidgets.QLabel()
+        self.labelAskPrice3 = QtWidgets.QLabel()
+        self.labelAskVolume1 = QtWidgets.QLabel()
+        self.labelAskVolume2 = QtWidgets.QLabel()
+        self.labelAskVolume3 = QtWidgets.QLabel()
+
+        labelLast = QtWidgets.QLabel(self.tick_text_class.LAST.value)
+        self.labelLastPrice = QtWidgets.QLabel()
+
+        grid_right = QtWidgets.QGridLayout()
+
+        grid_right.addWidget(labelAsk3, 0, 0)
+        grid_right.addWidget(labelAsk2, 1, 0)
+        grid_right.addWidget(labelAsk1, 2, 0)
+        grid_right.addWidget(labelLast, 3, 0)
+        grid_right.addWidget(labelBid1, 4, 0)
+        grid_right.addWidget(labelBid2, 5, 0)
+        grid_right.addWidget(labelBid3, 6, 0)
+
+        grid_right.addWidget(self.labelAskPrice3, 0, 1)
+        grid_right.addWidget(self.labelAskPrice2, 1, 1)
+        grid_right.addWidget(self.labelAskPrice1, 2, 1)
+        grid_right.addWidget(self.labelLastPrice, 3, 1)
+        grid_right.addWidget(self.labelBidPrice1, 4, 1)
+        grid_right.addWidget(self.labelBidPrice2, 5, 1)
+        grid_right.addWidget(self.labelBidPrice3, 6, 1)
+
+        grid_right.addWidget(self.labelAskVolume3, 0, 2)
+        grid_right.addWidget(self.labelAskVolume2, 1, 2)
+        grid_right.addWidget(self.labelAskVolume1, 2, 2)
+        grid_right.addWidget(self.labelBidVolume1, 4, 2)
+        grid_right.addWidget(self.labelBidVolume2, 5, 2)
+        grid_right.addWidget(self.labelBidVolume3, 6, 2)
+
+        # 布局整合
+        hbox = QtWidgets.QHBoxLayout()
+        hbox.addLayout(grid_left)
+        hbox.addLayout(grid_right)
+
+        self.send_botton = QtWidgets.QPushButton("发单")
+
+        vbox = QtWidgets.QVBoxLayout()
+        vbox.addLayout(hbox)
+        vbox.addWidget(self.send_botton)
+        vbox.addStretch()
+
+        self.setLayout(vbox)
+
+        self.send_botton.clicked.connect(self.send_order)
+
+    # ---------------------------------
+    def send_order(self):
+        strategy = self.ctaEngine.strategies.get(self.strategy_name)
+        if not strategy:
+            return
+
+        # 获取价格
+        price = self.linePrice.text()
+        if not price:
+            return
+        price = float(price)
+
+        # 获取数量
+        volumeText = self.lineVolume.text()
+        if not volumeText:
+            return
+
+        if '.' in volumeText:
+            volume = float(volumeText)
+        else:
+            volume = int(volumeText)
+
+        # 方向判断
+        direction = self.comboDirection.currentText()
+        offset = self.comboOffset.currentText()
+
+        if direction == self.direction_text_class.LONG.value and offset == self.offset_text_class.OPEN.value:
+            strategy.buy(price, volume)
+        elif direction == self.direction_text_class.SHORT.value and offset == self.offset_text_class.CLOSE.value:
+            strategy.sell(price, volume)
+        elif direction == self.direction_text_class.SHORT.value and offset == self.offset_text_class.OPEN.value:
+            strategy.short(price, volume)
+        if direction == self.direction_text_class.LONG.value and offset == self.offset_text_class.CLOSE.value:
+            strategy.cover(price, volume)
+
+    # ---------------------------------
+    def start(self):
+        self.set_data()
+        self.registerEvent()
+        self.show()
+
+    def set_data(self):
+        strategy = self.ctaEngine.strategies.get(self.strategy_name)
+        if not strategy:
+            return
+
+        self.symbol = strategy.vt_symbol
+        self.lineSymbol.setText(self.symbol)
+
+    def registerEvent(self):
+        """事件注册"""
+        if self.ctaEngine:
+            self.signal.connect(self.update_tick)
+            self.eventEngine.register(EVENT_TICK, self.signal.emit)
+
+    def closeEvent(self, QCloseEvent):
+        if self.ctaEngine:
+            self.eventEngine.unregister(EVENT_TICK, self.signal.emit)
+        super(SendOrderWidgets, self).closeEvent(QCloseEvent)
+
+    def update_tick(self, event):
+        """market tick update"""
+
+        tick = event.data
+        if tick.vt_symbol != self.symbol:
+            return
+        if not self.checkFixed.isChecked():
+            self.linePrice.setText(str(tick.last_price))
+
+        self.labelBidPrice1.setText(str(tick.bid_price_1))
+        self.labelAskPrice1.setText(str(tick.ask_price_1))
+        self.labelBidVolume1.setText(str(tick.bid_volume_1))
+        self.labelAskVolume1.setText(str(tick.ask_volume_1))
+
+        if tick.bid_price2:
+            self.labelBidPrice2.setText(str(tick.bid_price_2))
+            self.labelBidPrice3.setText(str(tick.bid_price_3))
+
+            self.labelAskPrice2.setText(str(tick.ask_price2))
+            self.labelAskPrice3.setText(str(tick.ask_price3))
+
+            self.labelBidVolume2.setText(str(tick.bid_volume_2))
+            self.labelBidVolume3.setText(str(tick.bid_volume_3))
+
+            self.labelAskVolume2.setText(str(tick.ask_volume_2))
+            self.labelAskVolume3.setText(str(tick.ask_volume_3))
+        self.labelLastPrice.setText(str(tick.last_price))
+
+
+class PlotWidgets(EverDataWidget):
+    signal = QtCore.pyqtSignal(type(Event))
+
+    def __init__(self, cta_engine, data: dict, parent=None):
+        super(PlotWidgets, self).__init__(parent)
+        self.cta_engine = cta_engine
+        self._data = data
+        self.vt_symbol = self._data.get("vt_symbol")
+
+        self.strategy_name = self._data.get("strategy_name")
+        self.generate_bar = BarGenerator(self.on_bar)
+        self.bar_list = []
+        self.init_ui()
+        self.close()
+
+    def init_ui(self):
+        self.setWindowTtile(f"{self.strategy_name}")
+
+        self.add_plot("candle_item", hide_x_axis=True)
+        self.add_plot("volume_item")
+
+        self.add_item(CandleItem, "candle", "candle")
+        self.add_item(VolumeItem, "volume", "volume")
+        self.add_cursor()
+
+    def load_all_bars(self):
+        if self.vt_symbol and not self.bar_list:
+            symbol, exchange = extract_vt_symbol(self.vt_symbol)
+            exchange = Exchange(exchange)
+            bars = mongo_manager.load_all_the_bars_data(symbol, exchange)
+            self.bar_list.extend(bars)
+
+    def init_data(self):
+        self.load_all_bars()
+        if self.bar_list:
+            self.update_history(self.bar_list)
+
+    def start_plot(self):
+
+        self.init_data()
+        self.register()
+        self.show()
+
+    def stop_plot(self):
+        self.unregister()
+        self.bar_list.clear()
+
+    def register(self):
+        event_engine = self.cta_engine.event_engine
+        event_engine.register(EVENT_TICK, self.on_tick)
+
+    def unregister(self):
+        event_engine = self.cta_engine.event_engine
+        event_engine.unregister(EVENT_TICK, self.on_tick)
+
+    def on_tick(self, event):
+        tick = event.data
+        if not tick.vt_symbol == self.vt_symbol:
+            return
+        self.generate_bar.update_tick(tick)
+
+    def close(self):
+        self.start_plot()
+        super(PlotWidgets, self).close()
+
+    def on_bar(self, bar):
+        self.update_bar(bar)
+
+
 class StrategyManager(QtWidgets.QFrame):
     """
     Manager for a strategy
     """
 
     def __init__(
-        self, cta_manager: CtaManager, cta_engine: CtaEngine, data: dict
+            self, cta_manager: CtaManager, cta_engine: CtaEngine, data: dict
     ):
         """"""
         super(StrategyManager, self).__init__()
@@ -175,6 +512,7 @@ class StrategyManager(QtWidgets.QFrame):
         self.strategy_name = data["strategy_name"]
         self._data = data
 
+        self.plot_widget = PlotWidgets(cta_engine, data)
         self.init_ui()
 
     def init_ui(self):
@@ -198,6 +536,12 @@ class StrategyManager(QtWidgets.QFrame):
         remove_button = QtWidgets.QPushButton("移除")
         remove_button.clicked.connect(self.remove_strategy)
 
+        # add manual operator send order function
+        send_order_button = QtWidgets.QPushButton("发单")
+        send_order_button.clicked.conect(self.send_order)
+
+        paint_chart_button = QtWidgets.QPushButton("画图")
+        paint_chart_button.clicked.connect(self.plot)
         strategy_name = self._data["strategy_name"]
         vt_symbol = self._data["vt_symbol"]
         class_name = self._data["class_name"]
@@ -218,7 +562,8 @@ class StrategyManager(QtWidgets.QFrame):
         hbox.addWidget(stop_button)
         hbox.addWidget(edit_button)
         hbox.addWidget(remove_button)
-
+        # add a new button
+        hbox.addWidget(send_order_button)
         vbox = QtWidgets.QVBoxLayout()
         vbox.addWidget(label)
         vbox.addLayout(hbox)
@@ -256,6 +601,13 @@ class StrategyManager(QtWidgets.QFrame):
         if n == editor.Accepted:
             setting = editor.get_setting()
             self.cta_engine.edit_strategy(strategy_name, setting)
+
+    def send_order(self):
+        send_order = SendOrderWidgets(self.cta_engine, self.strategy_name)
+        send_order.start()
+
+    def plot(self):
+        self.plot_widget.start_plot()
 
     def remove_strategy(self):
         """"""
@@ -374,7 +726,7 @@ class SettingEditor(QtWidgets.QDialog):
     """
 
     def __init__(
-        self, parameters: dict, strategy_name: str = "", class_name: str = ""
+            self, parameters: dict, strategy_name: str = "", class_name: str = ""
     ):
         """"""
         super(SettingEditor, self).__init__()

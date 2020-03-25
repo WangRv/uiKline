@@ -102,7 +102,7 @@ class CsvLoaderEngine(BaseEngine):
         end = bar.datetime
 
         # insert into database
-        database_manager.save_bar_data(bars)
+        mongo_manager.save_bar_data(bars)
         return start, end, count
 
     def load(

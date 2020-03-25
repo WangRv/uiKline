@@ -11,6 +11,8 @@ from queue import Empty, Queue
 from threading import Thread
 from typing import Any, Sequence, Type
 
+from vnpy.trader.object import TradeData, OrderData
+
 from vnpy.event import Event, EventEngine
 from .app import BaseApp
 from .event import (
@@ -52,8 +54,8 @@ class MainEngine:
         self.apps = {}
         self.exchanges = []
 
-        os.chdir(TRADER_DIR)    # Change working directory
-        self.init_engines()     # Initialize function engines
+        os.chdir(TRADER_DIR)  # Change working directory
+        self.init_engines()  # Initialize function engines
 
     def add_engine(self, engine_class: Any):
         """
@@ -229,10 +231,10 @@ class BaseEngine(ABC):
     """
 
     def __init__(
-        self,
-        main_engine: MainEngine,
-        event_engine: EventEngine,
-        engine_name: str,
+            self,
+            main_engine: MainEngine,
+            event_engine: EventEngine,
+            engine_name: str,
     ):
         """"""
         self.main_engine = main_engine
@@ -380,12 +382,20 @@ class OmsEngine(BaseEngine):
             self.active_orders[order.vt_orderid] = order
         # Otherwise, pop inactive order from in dict
         elif order.vt_orderid in self.active_orders:
-            self.active_orders.pop(order.vt_orderid)
+            # @todo necessary to update order trader volume by trade object,so this not pop it.
+            # self.active_orders.pop(order.vt_orderid)
+            pass
 
     def process_trade_event(self, event: Event):
         """"""
-        trade = event.data
+        trade: TradeData = event.data
+        if trade.orderid in self.active_orders:
+            order = self.active_orders.pop(trade.orderid)
+            # @todo addition function to update order data.
+            self.privatization_update_order(order, trade)
         self.trades[trade.vt_tradeid] = trade
+
+
 
     def process_position_event(self, event: Event):
         """"""
@@ -490,6 +500,13 @@ class OmsEngine(BaseEngine):
             ]
             return active_orders
 
+    def privatization_update_order(self, order: OrderData, trade: TradeData):
+        order.trader_volume = trade.volume
+        order.trader_average_price = trade.price
+        order.profit_loss = 0  # @todo calculate profit or loss
+        order.finish_time = trade.time
+        self.event_engine.put(event=Event(EVENT_ORDER, order))
+
 
 class EmailEngine(BaseEngine):
     """
@@ -531,7 +548,7 @@ class EmailEngine(BaseEngine):
                 msg = self.queue.get(block=True, timeout=1)
 
                 with smtplib.SMTP_SSL(
-                    SETTINGS["email.server"], SETTINGS["email.port"]
+                        SETTINGS["email.server"], SETTINGS["email.port"]
                 ) as smtp:
                     smtp.login(
                         SETTINGS["email.username"], SETTINGS["email.password"]
